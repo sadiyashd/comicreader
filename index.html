@@ -61,7 +61,7 @@
   }
   #page-container {
     display: flex; align-items: center; justify-content: center;
-    width: 100%; height: 100%; gap: 0;
+    width: 100%; height: 100%; gap: 12px;
   }
   #page-image-left, #page-image-right {
     max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
@@ -82,15 +82,30 @@
   #nav-menu-panel {
     display: none; position: absolute; top: 52px; right: 0;
     background: rgba(20,20,22,0.95); border-radius: 14px; padding: 6px;
-    min-width: 170px; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    min-width: 200px; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
   }
   #nav-menu-panel.open { display: flex; flex-direction: column; gap: 2px; }
   #nav-menu-panel button {
     background: none; border: none; color: white; text-align: left;
     padding: 12px 14px; font-size: 14px; border-radius: 8px; width: 100%;
+    display: flex; align-items: center; gap: 10px;
   }
+  #nav-menu-panel button .icon { font-size: 16px; width: 20px; text-align: center; }
   #nav-menu-panel button.active { background: #2b6fff; }
   #nav-menu-panel button:active { background: rgba(255,255,255,0.1); }
+  #stretch-panel {
+    display: none; padding: 12px 14px 8px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 4px;
+  }
+  #stretch-panel.open { display: block; }
+  #stretch-panel label {
+    display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; margin-top: 10px;
+  }
+  #stretch-panel label:first-child { margin-top: 0; }
+  #stretch-panel input[type="range"] { width: 100%; }
+  #stretch-reset-btn {
+    background: rgba(255,255,255,0.08); border: none; color: white; width: 100%;
+    padding: 8px; border-radius: 8px; font-size: 13px; margin-top: 10px;
+  }
   #loading-spinner {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
     color: #888; font-size: 14px; z-index: 20; max-width: 80%; text-align: center;
@@ -118,8 +133,16 @@
   <div id="nav-menu">
     <button id="nav-menu-btn">⋯</button>
     <div id="nav-menu-panel">
-      <button id="menu-library-btn">‹ Library</button>
-      <button id="menu-spread-btn">Two-Page Spread</button>
+      <button id="menu-library-btn"><span class="icon">🏠</span> Library</button>
+      <button id="menu-spread-btn"><span class="icon">📖</span> Two-Page Spread</button>
+      <button id="menu-stretch-btn"><span class="icon">↔️</span> Fix Stretching</button>
+      <div id="stretch-panel">
+        <label>Horizontal <span id="stretch-x-value">100%</span></label>
+        <input type="range" id="stretch-x-slider" min="70" max="130" value="100">
+        <label>Vertical <span id="stretch-y-value">100%</span></label>
+        <input type="range" id="stretch-y-slider" min="70" max="130" value="100">
+        <button id="stretch-reset-btn">Reset for this comic</button>
+      </div>
     </div>
   </div>
   <div id="loading-spinner">Loading page…</div>
@@ -528,6 +551,7 @@ async function showSpread(spreadIdx) {
     } else {
       pageImageRight.style.display = 'none';
       await waitForImageLoad(pageImageLeft);
+      applyStretchCorrection();
     }
 
     loadingSpinner.style.display = 'none';
@@ -550,6 +574,8 @@ function waitForImageLoad(img) {
   });
 }
 
+const SPREAD_GAP_PX = 12;
+
 function reflowSpread() {
   if (pageImageRight.style.display === 'none') return;
   const w1 = pageImageLeft.naturalWidth, h1 = pageImageLeft.naturalHeight;
@@ -557,7 +583,7 @@ function reflowSpread() {
   if (!w1 || !h1 || !w2 || !h2) return;
 
   const containerRect = pageContainer.getBoundingClientRect();
-  const cw = containerRect.width;
+  const cw = containerRect.width - SPREAD_GAP_PX;
   const ch = containerRect.height;
 
   const combinedAspectWidthAtHeight1 = (w1 / h1) + (w2 / h2);
@@ -570,6 +596,31 @@ function reflowSpread() {
   pageImageLeft.style.height = targetHeight + 'px';
   pageImageRight.style.width = width2 + 'px';
   pageImageRight.style.height = targetHeight + 'px';
+
+  applyStretchCorrection();
+}
+
+const STRETCH_KEY = 'usbComicReaderStretchCorrections';
+function loadStretchCorrections() {
+  try { return JSON.parse(localStorage.getItem(STRETCH_KEY)) || {}; } catch { return {}; }
+}
+function saveStretchCorrections(map) { localStorage.setItem(STRETCH_KEY, JSON.stringify(map)); }
+function getStretchForCurrentComic() {
+  if (!currentFile) return { scaleX: 1, scaleY: 1 };
+  const map = loadStretchCorrections();
+  return map[comicKey(currentFile)] || { scaleX: 1, scaleY: 1 };
+}
+function setStretchForCurrentComic(scaleX, scaleY) {
+  if (!currentFile) return;
+  const map = loadStretchCorrections();
+  map[comicKey(currentFile)] = { scaleX, scaleY };
+  saveStretchCorrections(map);
+}
+function applyStretchCorrection() {
+  const { scaleX, scaleY } = getStretchForCurrentComic();
+  const transform = `scale(${scaleX}, ${scaleY})`;
+  pageImageLeft.style.transform = transform;
+  if (pageImageRight.style.display !== 'none') pageImageRight.style.transform = transform;
 }
 
 window.addEventListener('resize', () => {
@@ -600,9 +651,46 @@ menuSpreadBtn.addEventListener('click', () => {
   }
 });
 
+const menuStretchBtn = document.getElementById('menu-stretch-btn');
+const stretchPanel = document.getElementById('stretch-panel');
+const stretchXSlider = document.getElementById('stretch-x-slider');
+const stretchYSlider = document.getElementById('stretch-y-slider');
+const stretchXValue = document.getElementById('stretch-x-value');
+const stretchYValue = document.getElementById('stretch-y-value');
+const stretchResetBtn = document.getElementById('stretch-reset-btn');
+
+menuStretchBtn.addEventListener('click', () => {
+  const isOpen = stretchPanel.classList.toggle('open');
+  if (isOpen) {
+    const { scaleX, scaleY } = getStretchForCurrentComic();
+    stretchXSlider.value = Math.round(scaleX * 100);
+    stretchYSlider.value = Math.round(scaleY * 100);
+    stretchXValue.textContent = stretchXSlider.value + '%';
+    stretchYValue.textContent = stretchYSlider.value + '%';
+  }
+});
+
+function handleStretchSliderInput() {
+  const scaleX = parseInt(stretchXSlider.value, 10) / 100;
+  const scaleY = parseInt(stretchYSlider.value, 10) / 100;
+  stretchXValue.textContent = stretchXSlider.value + '%';
+  stretchYValue.textContent = stretchYSlider.value + '%';
+  setStretchForCurrentComic(scaleX, scaleY);
+  applyStretchCorrection();
+}
+stretchXSlider.addEventListener('input', handleStretchSliderInput);
+stretchYSlider.addEventListener('input', handleStretchSliderInput);
+
+stretchResetBtn.addEventListener('click', () => {
+  stretchXSlider.value = 100;
+  stretchYSlider.value = 100;
+  handleStretchSliderInput();
+});
+
 menuLibraryBtn.addEventListener('click', () => {
   navMenuPanel.classList.remove('open');
   navMenuBtn.classList.remove('open');
+  stretchPanel.classList.remove('open');
   objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
   objectURLsInUse = [];
   readerScreen.style.display = 'none';
