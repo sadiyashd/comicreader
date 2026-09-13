@@ -21,8 +21,9 @@
     background: #2b6fff; color: white; padding: 14px 28px; border-radius: 12px;
     font-size: 16px; font-weight: 600; cursor: pointer;
   }
+  #file-input-label.disabled { background: #444; }
   #file-input { display: none; }
-  #status { color: #888; font-size: 13px; min-height: 18px; }
+  #status { color: #888; font-size: 13px; min-height: 18px; text-align: center; max-width: 340px; }
 
   #reader-screen {
     display: none; height: 100%; position: relative;
@@ -51,6 +52,7 @@
   #loading-spinner {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
     color: #666; font-size: 14px; z-index: 20;
+    max-width: 80%; text-align: center;
   }
 </style>
 </head>
@@ -58,7 +60,7 @@
 
 <div id="picker-screen">
   <h1>USB Comic Reader</h1>
-  <p>Pick a .cbz file directly from your USB drive. It stays on the drive — nothing is copied to this iPad.</p>
+  <p>Pick a .cbz or .cbr file directly from your USB drive. It stays on the drive — nothing is copied to this iPad.</p>
   <label id="file-input-label" for="file-input">Choose Comic File</label>
   <input type="file" id="file-input" accept="*/*">
   <div id="status"></div>
@@ -75,8 +77,10 @@
 </div>
 
 <script>
+let archiveType = null;
 let zip = null;
-let pageEntries = [];
+let rarExtractor = null;
+let pageNames = [];
 let currentPage = 0;
 let currentObjectURL = null;
 
@@ -95,16 +99,26 @@ fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
+  const lowerName = file.name.toLowerCase();
+  const isRar = lowerName.endsWith('.cbr') || lowerName.endsWith('.rar');
+  const isZip = lowerName.endsWith('.cbz') || lowerName.endsWith('.zip');
+
   statusEl.textContent = 'Opening archive…';
 
   try {
-    zip = await JSZip.loadAsync(file);
+    if (isRar) {
+      await openRar(file);
+    } else if (isZip) {
+      await openZip(file);
+    } else {
+      try {
+        await openZip(file);
+      } catch (zipErr) {
+        await openRar(file);
+      }
+    }
 
-    pageEntries = Object.values(zip.files)
-      .filter(f => !f.dir && IMAGE_EXT.test(f.name))
-      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-
-    if (pageEntries.length === 0) {
+    if (pageNames.length === 0) {
       statusEl.textContent = 'No image pages found in that archive.';
       return;
     }
@@ -119,29 +133,83 @@ fileInput.addEventListener('change', async (e) => {
   }
 });
 
+async function openZip(file) {
+  archiveType = 'zip';
+  zip = await JSZip.loadAsync(file);
+  pageNames = Object.values(zip.files)
+    .filter(f => !f.dir && IMAGE_EXT.test(f.name))
+    .map(f => f.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+let unrarModulePromise = null;
+function loadUnrarModule() {
+  if (!unrarModulePromise) {
+    unrarModulePromise = import('https://cdn.jsdelivr.net/npm/node-unrar-js@2.0.2/+esm');
+  }
+  return unrarModulePromise;
+}
+
+async function openRar(file) {
+  statusEl.textContent = 'Loading RAR support…';
+  const unrarModule = await loadUnrarModule();
+
+  archiveType = 'rar';
+  const buf = await file.arrayBuffer();
+
+  const wasmResp = await fetch('https://cdn.jsdelivr.net/npm/node-unrar-js@2.0.2/esm/js/unrar.wasm');
+  const wasmBinary = await wasmResp.arrayBuffer();
+
+  rarExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
+
+  const list = rarExtractor.getFileList();
+  const headers = [...list.fileHeaders];
+  pageNames = headers
+    .filter(h => !h.flags.directory && IMAGE_EXT.test(h.name))
+    .map(h => h.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+async function getPageBlob(name) {
+  if (archiveType === 'zip') {
+    return await zip.files[name].async('blob');
+  } else {
+    const extracted = rarExtractor.extract({ files: [name] });
+    const files = [...extracted.files];
+    const data = files[0].extraction;
+    const ext = name.split('.').pop().toLowerCase();
+    const mime = ext === 'png' ? 'image/png'
+      : ext === 'gif' ? 'image/gif'
+      : ext === 'webp' ? 'image/webp'
+      : 'image/jpeg';
+    return new Blob([data], { type: mime });
+  }
+}
+
 async function showPage(index) {
-  if (index < 0 || index >= pageEntries.length) return;
+  if (index < 0 || index >= pageNames.length) return;
   currentPage = index;
 
+  loadingSpinner.textContent = 'Loading page…';
   loadingSpinner.style.display = 'block';
   pageImage.style.display = 'none';
 
-  const entry = pageEntries[index];
-  const blob = await entry.async('blob');
+  try {
+    const blob = await getPageBlob(pageNames[index]);
 
-  if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
-  currentObjectURL = URL.createObjectURL(blob);
+    if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
+    currentObjectURL = URL.createObjectURL(blob);
 
-  pageImage.src = currentObjectURL;
-  pageImage.onload = () => {
-    loadingSpinner.style.display = 'none';
-    pageImage.style.display = 'block';
-  };
+    pageImage.src = currentObjectURL;
+    pageImage.onload = () => {
+      loadingSpinner.style.display = 'none';
+      pageImage.style.display = 'block';
+    };
 
-  pageCounter.textContent = `${index + 1} / ${pageEntries.length}`;
-
-  if (index + 1 < pageEntries.length) {
-    pageEntries[index + 1].async('blob').catch(() => {});
+    pageCounter.textContent = `${index + 1} / ${pageNames.length}`;
+  } catch (err) {
+    console.error(err);
+    loadingSpinner.textContent = 'Error loading page: ' + err.message;
   }
 }
 
@@ -154,7 +222,9 @@ document.getElementById('tap-center').addEventListener('click', () => {
 closeBtn.addEventListener('click', () => {
   if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
   zip = null;
-  pageEntries = [];
+  rarExtractor = null;
+  archiveType = null;
+  pageNames = [];
   readerScreen.style.display = 'none';
   pickerScreen.style.display = 'flex';
   fileInput.value = '';
