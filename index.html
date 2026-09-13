@@ -63,6 +63,13 @@
     display: flex; align-items: center; justify-content: center;
     width: 100%; height: 100%; gap: 12px;
     padding-bottom: max(28px, env(safe-area-inset-bottom));
+    opacity: 1;
+    transition: opacity 0.18s ease-in-out, transform 0.18s ease-in-out;
+    will-change: opacity, transform;
+  }
+  #page-container.changing-page {
+    opacity: 0;
+    transform: scale(0.985);
   }
   #page-image-left, #page-image-right {
     max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
@@ -105,7 +112,9 @@
   #loading-spinner {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
     color: #888; font-size: 14px; z-index: 20; max-width: 80%; text-align: center;
+    pointer-events: none; opacity: 0; transition: opacity 0.2s ease;
   }
+  #loading-spinner.visible { opacity: 1; }
   input[type="file"] { display: none; }
 </style>
 </head>
@@ -495,6 +504,7 @@ let currentSpreadIndex = 0;
 let spreadModeEnabled = loadSpreadMode();
 let openRequestId = 0;
 let objectURLsInUse = [];
+let preloadedBlobs = {};
 
 function updateSpreadToggleUI() {
   menuSpreadBtn.classList.toggle('active', spreadModeEnabled);
@@ -550,6 +560,21 @@ async function openComic(file) {
   }
 }
 
+async function preloadNextSpread(spreadIdx) {
+  const nextIdx = spreadIdx + 1;
+  if (nextIdx >= spreads.length || !currentArchive) return;
+  const pageIndices = spreads[nextIdx];
+  pageIndices.forEach(async (i) => {
+    if (!preloadedBlobs[i]) {
+      try {
+        preloadedBlobs[i] = await getPageBlobFromArchive(currentArchive, currentArchive.pageNames[i]);
+      } catch (err) {
+        console.warn('Preload failed for page', i, err);
+      }
+    }
+  });
+}
+
 async function showSpread(spreadIdx) {
   if (spreadIdx < 0 || spreadIdx >= spreads.length) return;
   currentSpreadIndex = spreadIdx;
@@ -558,20 +583,31 @@ async function showSpread(spreadIdx) {
   const myRequestId = openRequestId;
   const pageIndices = spreads[spreadIdx];
 
+  pageContainer.classList.add('changing-page');
+
   loadingSpinner.textContent = 'Loading page…';
-  loadingSpinner.style.display = 'block';
-  pageImageLeft.style.display = 'none';
-  pageImageRight.style.display = 'none';
-  pageImageLeft.style.width = '';
-  pageImageLeft.style.height = '';
-  pageImageRight.style.width = '';
-  pageImageRight.style.height = '';
+  
+  const timer = setTimeout(() => {
+    if (myRequestId === openRequestId) {
+      loadingSpinner.classList.add('visible');
+    }
+  }, 200);
 
   try {
     const blobs = await Promise.all(
-      pageIndices.map(i => getPageBlobFromArchive(myArchive, myArchive.pageNames[i]))
+      pageIndices.map(async (i) => {
+        if (preloadedBlobs[i]) {
+          const b = preloadedBlobs[i];
+          delete preloadedBlobs[i];
+          return b;
+        }
+        return await getPageBlobFromArchive(myArchive, myArchive.pageNames[i]);
+      })
     );
-    if (myRequestId !== openRequestId) return;
+    if (myRequestId !== openRequestId) {
+      clearTimeout(timer);
+      return;
+    }
 
     objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
     objectURLsInUse = [];
@@ -586,7 +622,10 @@ async function showSpread(spreadIdx) {
       pageImageRight.src = urls[1];
       pageImageRight.style.display = 'block';
       await Promise.all([waitForImageLoad(pageImageLeft), waitForImageLoad(pageImageRight)]);
-      if (myRequestId !== openRequestId) return;
+      if (myRequestId !== openRequestId) {
+        clearTimeout(timer);
+        return;
+      }
       reflowSpread();
     } else {
       pageImageRight.style.display = 'none';
@@ -594,15 +633,25 @@ async function showSpread(spreadIdx) {
       applyStretchCorrection();
     }
 
-    loadingSpinner.style.display = 'none';
+    clearTimeout(timer);
+    loadingSpinner.classList.remove('visible');
+
+    setTimeout(() => {
+      if (myRequestId === openRequestId) {
+        pageContainer.classList.remove('changing-page');
+      }
+    }, 20);
 
     const progress = loadProgress();
     progress[comicKey(myFile)] = pageIndices[0];
     saveProgress(progress);
+
+    preloadNextSpread(spreadIdx);
   } catch (err) {
     console.error(err);
+    clearTimeout(timer);
     loadingSpinner.textContent = 'Error loading page: ' + err.message;
-    loadingSpinner.style.display = 'block';
+    loadingSpinner.classList.add('visible');
   }
 }
 
@@ -736,6 +785,7 @@ menuLibraryBtn.addEventListener('click', () => {
   closeNavMenu();
   objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
   objectURLsInUse = [];
+  preloadedBlobs = {};
   readerScreen.style.display = 'none';
   libraryScreen.style.display = 'flex';
 
