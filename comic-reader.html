@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>USB Comic Reader</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; background: #000; color: #eee;
+    font-family: -apple-system, sans-serif; overflow: hidden;
+  }
+  #picker-screen {
+    height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 20px; padding: 20px;
+  }
+  #picker-screen h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  #picker-screen p { color: #999; font-size: 14px; text-align: center; max-width: 320px; margin: 0; }
+  #file-input-label {
+    background: #2b6fff; color: white; padding: 14px 28px; border-radius: 12px;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+  }
+  #file-input { display: none; }
+  #status { color: #888; font-size: 13px; min-height: 18px; }
+
+  #reader-screen {
+    display: none; height: 100%; position: relative;
+    align-items: center; justify-content: center;
+  }
+  #page-image {
+    max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
+  }
+  #tap-left, #tap-right {
+    position: absolute; top: 0; bottom: 0; width: 33%; z-index: 5;
+  }
+  #tap-left { left: 0; } #tap-right { right: 0; }
+  #tap-center {
+    position: absolute; top: 0; bottom: 0; left: 33%; right: 33%; z-index: 5;
+  }
+  #page-counter {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.6); padding: 6px 14px; border-radius: 20px;
+    font-size: 13px; z-index: 10; pointer-events: none;
+  }
+  #close-btn {
+    position: absolute; top: 14px; right: 14px; z-index: 10;
+    background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 20px;
+    padding: 8px 16px; font-size: 14px;
+  }
+  #loading-spinner {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    color: #666; font-size: 14px; z-index: 20;
+  }
+</style>
+</head>
+<body>
+
+<div id="picker-screen">
+  <h1>USB Comic Reader</h1>
+  <p>Pick a .cbz file directly from your USB drive. It stays on the drive — nothing is copied to this iPad.</p>
+  <label id="file-input-label" for="file-input">Choose Comic File</label>
+  <input type="file" id="file-input" accept=".cbz,.zip">
+  <div id="status"></div>
+</div>
+
+<div id="reader-screen">
+  <button id="close-btn">Close</button>
+  <div id="loading-spinner">Loading page…</div>
+  <img id="page-image" style="display:none;">
+  <div id="tap-left"></div>
+  <div id="tap-center"></div>
+  <div id="tap-right"></div>
+  <div id="page-counter"></div>
+</div>
+
+<script>
+let zip = null;
+let pageEntries = []; // sorted zip entries that are images
+let currentPage = 0;
+let currentObjectURL = null;
+
+const pickerScreen = document.getElementById('picker-screen');
+const readerScreen = document.getElementById('reader-screen');
+const fileInput = document.getElementById('file-input');
+const statusEl = document.getElementById('status');
+const pageImage = document.getElementById('page-image');
+const pageCounter = document.getElementById('page-counter');
+const loadingSpinner = document.getElementById('loading-spinner');
+const closeBtn = document.getElementById('close-btn');
+
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp)$/i;
+
+fileInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  statusEl.textContent = 'Opening archive…';
+
+  try {
+    // NOTE: JSZip.loadAsync reads the file's bytes via the browser's Blob/File
+    // interface. The File object here is a live reference to the picked file —
+    // this does not copy it into app/browser storage first. JSZip parses the
+    // zip's central directory to build the entry list without decompressing
+    // every entry up front.
+    zip = await JSZip.loadAsync(file);
+
+    pageEntries = Object.values(zip.files)
+      .filter(f => !f.dir && IMAGE_EXT.test(f.name))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    if (pageEntries.length === 0) {
+      statusEl.textContent = 'No image pages found in that archive.';
+      return;
+    }
+
+    currentPage = 0;
+    pickerScreen.style.display = 'none';
+    readerScreen.style.display = 'flex';
+    await showPage(currentPage);
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Could not open that file: ' + err.message;
+  }
+});
+
+async function showPage(index) {
+  if (index < 0 || index >= pageEntries.length) return;
+  currentPage = index;
+
+  loadingSpinner.style.display = 'block';
+  pageImage.style.display = 'none';
+
+  // Decode only this one page's bytes, on demand.
+  const entry = pageEntries[index];
+  const blob = await entry.async('blob');
+
+  if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
+  currentObjectURL = URL.createObjectURL(blob);
+
+  pageImage.src = currentObjectURL;
+  pageImage.onload = () => {
+    loadingSpinner.style.display = 'none';
+    pageImage.style.display = 'block';
+  };
+
+  pageCounter.textContent = `${index + 1} / ${pageEntries.length}`;
+
+  // Prefetch next page's blob in the background (still on-demand, just one ahead)
+  if (index + 1 < pageEntries.length) {
+    pageEntries[index + 1].async('blob').catch(() => {});
+  }
+}
+
+document.getElementById('tap-left').addEventListener('click', () => showPage(currentPage - 1));
+document.getElementById('tap-right').addEventListener('click', () => showPage(currentPage + 1));
+document.getElementById('tap-center').addEventListener('click', () => {
+  pageCounter.style.display = pageCounter.style.display === 'none' ? 'block' : 'none';
+});
+
+closeBtn.addEventListener('click', () => {
+  if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
+  zip = null;
+  pageEntries = [];
+  readerScreen.style.display = 'none';
+  pickerScreen.style.display = 'flex';
+  fileInput.value = '';
+  statusEl.textContent = '';
+});
+</script>
+
+</body>
+</html>
