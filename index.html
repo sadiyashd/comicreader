@@ -114,7 +114,10 @@
 <div id="library-screen">
   <div id="library-header">
     <h1>My Comics</h1>
-    <label id="choose-btn" for="file-input">Choose Comics</label>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button id="library-reload-btn" style="background:rgba(255,255,255,0.08); color:white; border:none; border-radius:10px; padding:10px 12px; font-size:16px;">🔄</button>
+      <label id="choose-btn" for="file-input">Choose Comics</label>
+    </div>
     <input type="file" id="file-input" accept="*/*" multiple>
   </div>
   <div id="status"></div>
@@ -131,6 +134,7 @@
       <button id="menu-library-btn"><span class="icon">🏠</span> Library</button>
       <button id="menu-spread-btn"><span class="icon">📖</span> Two-Page Spread</button>
       <button id="menu-stretch-btn"><span class="icon">↔️</span> Fix Stretching</button>
+      <button id="menu-reload-btn"><span class="icon">🔄</span> Reload App</button>
       <div id="stretch-panel">
         <label>Horizontal <span id="stretch-x-value">100%</span></label>
         <input type="range" id="stretch-x-slider" min="70" max="130" value="100">
@@ -286,47 +290,68 @@ function handleCardTap(key) {
 }
 
 fileInput.addEventListener('change', async (e) => {
-  const newFiles = Array.from(e.target.files);
-  if (newFiles.length === 0) return;
+  try {
+    const newFiles = Array.from(e.target.files);
+    if (newFiles.length === 0) return;
 
-  const existingKeys = new Set(libraryFiles.map(f => comicKey(f)));
-  const filesToAdd = newFiles.filter(f => !existingKeys.has(comicKey(f)));
+    const existingKeys = new Set(libraryFiles.map(f => comicKey(f)));
+    const filesToAdd = newFiles.filter(f => !existingKeys.has(comicKey(f)));
 
-  libraryFiles = libraryFiles.concat(filesToAdd);
-  libraryEmpty.style.display = 'none';
-  libraryGrid.style.display = 'grid';
+    libraryFiles = libraryFiles.concat(filesToAdd);
+    libraryEmpty.style.display = 'none';
+    libraryGrid.style.display = 'grid';
 
-  const progress = loadProgress();
+    const progress = loadProgress();
 
-  filesToAdd.forEach((file) => {
-    const key = comicKey(file);
-    let card = cardsByKey[key];
+    const cardsToLoad = [];
+    filesToAdd.forEach((file) => {
+      const key = comicKey(file);
+      let card = cardsByKey[key];
 
-    if (!card) {
-      card = buildCard(file.name.replace(/\.(cbz|cbr|zip|rar)$/i, ''), key);
-      card.addEventListener('click', () => handleCardTap(key));
-      libraryGrid.appendChild(card);
-      cardsByKey[key] = card;
+      if (!card) {
+        card = buildCard(file.name.replace(/\.(cbz|cbr|zip|rar)$/i, ''), key);
+        card.addEventListener('click', () => handleCardTap(key));
+        libraryGrid.appendChild(card);
+        cardsByKey[key] = card;
+      }
+
+      const cover = card.querySelector('.comic-cover');
+      cover.classList.remove('needs-reselect');
+      const badge = cover.querySelector('.reselect-badge');
+      if (badge) badge.remove();
+
+      cardsToLoad.push({ file, cover, key });
+    });
+
+    if (cardsToLoad.length > 1) {
+      statusEl.textContent = `Loading covers… 0 / ${cardsToLoad.length}`;
+    }
+    for (let i = 0; i < cardsToLoad.length; i++) {
+      const { file, cover, key } = cardsToLoad[i];
+      try {
+        await loadCoverThumbnail(file, cover, progress, key);
+      } catch (err) {
+        console.error('Failed to load cover for', file.name, err);
+      }
+      if (cardsToLoad.length > 1) {
+        statusEl.textContent = `Loading covers… ${i + 1} / ${cardsToLoad.length}`;
+      }
     }
 
-    const cover = card.querySelector('.comic-cover');
-    cover.classList.remove('needs-reselect');
-    const badge = cover.querySelector('.reselect-badge');
-    if (badge) badge.remove();
-
-    loadCoverThumbnail(file, cover, progress, key);
-  });
-
-  if (pendingOpenKey) {
-    const match = libraryFiles.find(f => comicKey(f) === pendingOpenKey);
-    if (match) {
-      pendingOpenKey = null;
-      statusEl.textContent = '';
-      openComic(match);
-      return;
+    if (pendingOpenKey) {
+      const match = libraryFiles.find(f => comicKey(f) === pendingOpenKey);
+      if (match) {
+        pendingOpenKey = null;
+        statusEl.textContent = '';
+        openComic(match);
+        return;
+      }
     }
+    statusEl.textContent = '';
+  } catch (err) {
+    console.error('File selection failed:', err);
+    statusEl.textContent = 'Something went wrong loading those files: ' + err.message;
   }
-  statusEl.textContent = '';
 });
 
 async function loadCoverThumbnail(file, coverEl, progress, key) {
@@ -389,27 +414,43 @@ async function openZip(file) {
   return { type: 'zip', zip, pageNames };
 }
 
+let wasmBinaryPromise = null;
+function loadWasmBinary() {
+  if (!wasmBinaryPromise) {
+    wasmBinaryPromise = fetch('https://cdn.jsdelivr.net/npm/node-unrar-js@2.0.2/esm/js/unrar.wasm')
+      .then(resp => resp.arrayBuffer());
+  }
+  return wasmBinaryPromise;
+}
+
 async function openRar(file) {
   const unrarModule = await loadUnrarModule();
+  const wasmBinary = await loadWasmBinary();
   const buf = await file.arrayBuffer();
-  const wasmResp = await fetch('https://cdn.jsdelivr.net/npm/node-unrar-js@2.0.2/esm/js/unrar.wasm');
-  const wasmBinary = await wasmResp.arrayBuffer();
-  const rarExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
-  const list = rarExtractor.getFileList();
+  const listExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
+  const list = listExtractor.getFileList();
   const headers = [...list.fileHeaders];
   const pageNames = headers
     .filter(h => !h.flags.directory && IMAGE_EXT.test(h.name))
     .map(h => h.name)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return { type: 'rar', rarExtractor, pageNames };
+  return { type: 'rar', file, pageNames };
 }
 
 async function getPageBlobFromArchive(archive, name) {
   if (archive.type === 'zip') {
     return await archive.zip.files[name].async('blob');
   } else {
-    const extracted = archive.rarExtractor.extract({ files: [name] });
+    const unrarModule = await loadUnrarModule();
+    const wasmBinary = await loadWasmBinary();
+    const buf = await archive.file.arrayBuffer();
+    const rarExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
+
+    const extracted = rarExtractor.extract({ files: [name] });
     const files = [...extracted.files];
+    if (!files[0] || !files[0].extraction) {
+      throw new Error(`Could not extract "${name}" from this .cbr — the file may use a RAR format this reader can't decode.`);
+    }
     const data = files[0].extraction;
     const ext = name.split('.').pop().toLowerCase();
     const mime = ext === 'png' ? 'image/png'
@@ -712,6 +753,27 @@ menuLibraryBtn.addEventListener('click', () => {
       bar.querySelector('.progress-bar-fill').style.width = pct + '%';
     }
   }
+});
+
+function forceReload() {
+  const url = new URL(window.location.href);
+  url.searchParams.set('_reload', Date.now());
+  window.location.replace(url.toString());
+}
+
+const menuReloadBtn = document.getElementById('menu-reload-btn');
+menuReloadBtn.addEventListener('click', forceReload);
+
+const libraryReloadBtn = document.getElementById('library-reload-btn');
+libraryReloadBtn.addEventListener('click', forceReload);
+
+window.addEventListener('error', (e) => {
+  console.error('Unhandled error:', e.error || e.message);
+  if (statusEl) statusEl.textContent = 'Something went wrong: ' + (e.error ? e.error.message : e.message);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('Unhandled promise rejection:', e.reason);
+  if (statusEl) statusEl.textContent = 'Something went wrong: ' + (e.reason && e.reason.message ? e.reason.message : e.reason);
 });
 
 renderCachedLibrary();
