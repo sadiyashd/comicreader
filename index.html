@@ -434,7 +434,7 @@ async function openRar(file) {
     .filter(h => !h.flags.directory && IMAGE_EXT.test(h.name))
     .map(h => h.name)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return { type: 'rar', file, pageNames };
+  return { type: 'rar', buf, pageNames };
 }
 
 async function getPageBlobFromArchive(archive, name) {
@@ -443,8 +443,7 @@ async function getPageBlobFromArchive(archive, name) {
   } else {
     const unrarModule = await loadUnrarModule();
     const wasmBinary = await loadWasmBinary();
-    const buf = await archive.file.arrayBuffer();
-    const rarExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
+    const rarExtractor = await unrarModule.createExtractorFromData({ data: archive.buf, wasmBinary });
 
     const extracted = rarExtractor.extract({ files: [name] });
     const files = [...extracted.files];
