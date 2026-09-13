@@ -22,7 +22,7 @@
   #library-header h1 { font-size: 22px; font-weight: 700; margin: 0; }
   #choose-btn {
     background: #2b6fff; color: white; border: none; border-radius: 10px;
-    padding: 10px 16px; font-size: 14px; font-weight: 600;
+    padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
   }
   #library-empty {
     flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -84,7 +84,7 @@
   #nav-menu-panel button {
     background: none; border: none; color: white; text-align: left;
     padding: 14px 16px; font-size: 15px; border-radius: 10px; width: 100%;
-    display: flex; align-items: center; gap: 12px;
+    display: flex; align-items: center; gap: 12px; cursor: pointer;
   }
   #nav-menu-panel button .icon { font-size: 18px; width: 22px; text-align: center; }
   #nav-menu-panel button.active { background: #2b6fff; }
@@ -100,7 +100,7 @@
   #stretch-panel input[type="range"] { width: 100%; }
   #stretch-reset-btn {
     background: rgba(255,255,255,0.08); border: none; color: white; width: 100%;
-    padding: 8px; border-radius: 8px; font-size: 13px; margin-top: 10px;
+    padding: 8px; border-radius: 8px; font-size: 13px; margin-top: 10px; cursor: pointer;
   }
   #loading-spinner {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
@@ -115,7 +115,7 @@
   <div id="library-header">
     <h1>My Comics</h1>
     <div style="display:flex; gap:8px; align-items:center;">
-      <button id="library-reload-btn" style="background:rgba(255,255,255,0.08); color:white; border:none; border-radius:10px; padding:10px 12px; font-size:16px;">🔄</button>
+      <button id="library-reload-btn" style="background:rgba(255,255,255,0.08); color:white; border:none; border-radius:10px; padding:10px 12px; font-size:16px; cursor:pointer;">🔄</button>
       <label id="choose-btn" for="file-input">Choose Comics</label>
     </div>
     <input type="file" id="file-input" accept="*/*" multiple>
@@ -123,7 +123,7 @@
   <div id="status"></div>
   <div id="library-empty">
     <p>Select .cbz and .cbr files straight from your USB drive. They stay on the drive — nothing is copied to this iPad.</p>
-    <label id="choose-btn-2" for="file-input" style="background:#2b6fff;color:white;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;">Choose Comics</label>
+    <label id="choose-btn-2" for="file-input" style="background:#2b6fff;color:white;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer;">Choose Comics</label>
   </div>
   <div id="library-grid" style="display:none;"></div>
 </div>
@@ -157,6 +157,13 @@
 <script>
 const PROGRESS_KEY = 'usbComicReaderProgress';
 const SPREAD_MODE_KEY = 'usbComicReaderSpreadMode';
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp)$/i;
+
+function isValidImageFile(filePath) {
+  if (!filePath) return false;
+  const fileName = filePath.split('/').pop();
+  return !fileName.startsWith('._') && !filePath.includes('__MACOSX') && IMAGE_EXT.test(fileName);
+}
 
 function loadProgress() {
   try { return JSON.parse(localStorage.getItem(PROGRESS_KEY)) || {}; } catch { return {}; }
@@ -229,7 +236,9 @@ async function renderCachedLibrary() {
     const cover = card.querySelector('.comic-cover');
     cover.innerHTML = '';
     const img = document.createElement('img');
-    img.src = URL.createObjectURL(entry.blob);
+    const url = URL.createObjectURL(entry.blob);
+    img.src = url;
+    img.onload = () => URL.revokeObjectURL(url);
     cover.appendChild(img);
     cover.classList.add('needs-reselect');
 
@@ -363,6 +372,7 @@ async function loadCoverThumbnail(file, coverEl, progress, key) {
     const url = URL.createObjectURL(blob);
     const img = document.createElement('img');
     img.src = url;
+    img.onload = () => URL.revokeObjectURL(url);
     coverEl.innerHTML = '';
     coverEl.appendChild(img);
     addProgressBar(coverEl, key, opened.pageNames.length, progress);
@@ -377,7 +387,6 @@ async function loadCoverThumbnail(file, coverEl, progress, key) {
   }
 }
 
-const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp)$/i;
 let unrarModulePromise = null;
 function loadUnrarModule() {
   if (!unrarModulePromise) {
@@ -408,7 +417,7 @@ async function openArchive(file) {
 async function openZip(file) {
   const zip = await JSZip.loadAsync(file);
   const pageNames = Object.values(zip.files)
-    .filter(f => !f.dir && IMAGE_EXT.test(f.name))
+    .filter(f => !f.dir && isValidImageFile(f.name))
     .map(f => f.name)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   return { type: 'zip', zip, pageNames };
@@ -427,32 +436,26 @@ async function openRar(file) {
   const unrarModule = await loadUnrarModule();
   const wasmBinary = await loadWasmBinary();
   const buf = await file.arrayBuffer();
-  const listExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
-  const list = listExtractor.getFileList();
+  const rarExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
+  const list = rarExtractor.getFileList();
   const headers = [...list.fileHeaders];
   const pageNames = headers
-    .filter(h => !h.flags.directory && IMAGE_EXT.test(h.name))
+    .filter(h => !h.flags.directory && isValidImageFile(h.name))
     .map(h => h.name)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return { type: 'rar', buf, pageNames };
+  return { type: 'rar', rarExtractor, pageNames };
 }
 
 async function getPageBlobFromArchive(archive, name) {
   if (archive.type === 'zip') {
     return await archive.zip.files[name].async('blob');
   } else {
-    const unrarModule = await loadUnrarModule();
-    const wasmBinary = await loadWasmBinary();
-    const rarExtractor = await unrarModule.createExtractorFromData({ data: archive.buf, wasmBinary });
-
-    const extracted = rarExtractor.extract();
+    const extracted = archive.rarExtractor.extract({ files: [name] });
     const files = [...extracted.files];
-    const match = files.find(f => f.fileHeader && f.fileHeader.name === name);
-
-    if (!match || !match.extraction) {
-      throw new Error(`Could not find "${name}" in this .cbr's extracted contents.`);
+    if (!files[0] || !files[0].extraction) {
+      throw new Error(`Could not read page "${name}" from this .cbr.`);
     }
-    const data = match.extraction;
+    const data = files[0].extraction;
     const ext = name.split('.').pop().toLowerCase();
     const mime = ext === 'png' ? 'image/png'
       : ext === 'gif' ? 'image/gif'
