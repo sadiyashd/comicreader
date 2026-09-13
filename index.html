@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Comics">
@@ -62,6 +62,7 @@
   #page-container {
     display: flex; align-items: center; justify-content: center;
     width: 100%; height: 100%; gap: 12px;
+    padding-bottom: max(28px, env(safe-area-inset-bottom));
   }
   #page-image-left, #page-image-right {
     max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
@@ -70,27 +71,22 @@
   #tap-left, #tap-right { position: absolute; top: 0; bottom: 0; width: 33%; z-index: 5; }
   #tap-left { left: 0; } #tap-right { right: 0; }
   #tap-center { position: absolute; top: 0; bottom: 0; left: 33%; right: 33%; z-index: 5; }
-  #nav-menu {
-    position: absolute; top: 14px; right: 14px; z-index: 15;
+  #nav-menu-overlay {
+    display: none; position: absolute; inset: 0; z-index: 15;
+    background: rgba(0,0,0,0.4);
+    align-items: center; justify-content: center;
   }
-  #nav-menu-btn {
-    width: 44px; height: 44px; border-radius: 50%; border: none;
-    background: rgba(0,0,0,0.65); color: white; font-size: 20px;
-    display: flex; align-items: center; justify-content: center;
-  }
-  #nav-menu-btn.open { background: #2b6fff; }
+  #nav-menu-overlay.open { display: flex; }
   #nav-menu-panel {
-    display: none; position: absolute; top: 52px; right: 0;
-    background: rgba(20,20,22,0.95); border-radius: 14px; padding: 6px;
-    min-width: 200px; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    background: rgba(24,24,26,0.97); border-radius: 18px; padding: 8px;
+    min-width: 220px; box-shadow: 0 8px 30px rgba(0,0,0,0.6);
   }
-  #nav-menu-panel.open { display: flex; flex-direction: column; gap: 2px; }
   #nav-menu-panel button {
     background: none; border: none; color: white; text-align: left;
-    padding: 12px 14px; font-size: 14px; border-radius: 8px; width: 100%;
-    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px; font-size: 15px; border-radius: 10px; width: 100%;
+    display: flex; align-items: center; gap: 12px;
   }
-  #nav-menu-panel button .icon { font-size: 16px; width: 20px; text-align: center; }
+  #nav-menu-panel button .icon { font-size: 18px; width: 22px; text-align: center; }
   #nav-menu-panel button.active { background: #2b6fff; }
   #nav-menu-panel button:active { background: rgba(255,255,255,0.1); }
   #stretch-panel {
@@ -130,8 +126,7 @@
 </div>
 
 <div id="reader-screen">
-  <div id="nav-menu">
-    <button id="nav-menu-btn">⋯</button>
+  <div id="nav-menu-overlay">
     <div id="nav-menu-panel">
       <button id="menu-library-btn"><span class="icon">🏠</span> Library</button>
       <button id="menu-spread-btn"><span class="icon">📖</span> Two-Page Spread</button>
@@ -430,22 +425,22 @@ const readerScreen = document.getElementById('reader-screen');
 const pageContainer = document.getElementById('page-container');
 const pageImageLeft = document.getElementById('page-image-left');
 const pageImageRight = document.getElementById('page-image-right');
-const navMenuBtn = document.getElementById('nav-menu-btn');
 const loadingSpinner = document.getElementById('loading-spinner');
+const navMenuOverlay = document.getElementById('nav-menu-overlay');
 const navMenuPanel = document.getElementById('nav-menu-panel');
 const menuLibraryBtn = document.getElementById('menu-library-btn');
 const menuSpreadBtn = document.getElementById('menu-spread-btn');
 
-navMenuBtn.addEventListener('click', () => {
-  const isOpen = navMenuPanel.classList.toggle('open');
-  navMenuBtn.classList.toggle('open', isOpen);
-});
+function openNavMenu() {
+  navMenuOverlay.classList.add('open');
+}
+function closeNavMenu() {
+  navMenuOverlay.classList.remove('open');
+  stretchPanel.classList.remove('open');
+}
 
-document.addEventListener('click', (e) => {
-  if (!document.getElementById('nav-menu').contains(e.target)) {
-    navMenuPanel.classList.remove('open');
-    navMenuBtn.classList.remove('open');
-  }
+navMenuOverlay.addEventListener('click', (e) => {
+  if (e.target === navMenuOverlay) closeNavMenu();
 });
 
 let currentArchive = null;
@@ -583,8 +578,11 @@ function reflowSpread() {
   if (!w1 || !h1 || !w2 || !h2) return;
 
   const containerRect = pageContainer.getBoundingClientRect();
+  const containerStyle = getComputedStyle(pageContainer);
+  const paddingBottom = parseFloat(containerStyle.paddingBottom) || 0;
+  const paddingTop = parseFloat(containerStyle.paddingTop) || 0;
   const cw = containerRect.width - SPREAD_GAP_PX;
-  const ch = containerRect.height;
+  const ch = containerRect.height - paddingBottom - paddingTop;
 
   const combinedAspectWidthAtHeight1 = (w1 / h1) + (w2 / h2);
   let targetHeight = Math.min(ch, cw / combinedAspectWidthAtHeight1);
@@ -632,16 +630,18 @@ window.addEventListener('resize', () => {
 document.getElementById('tap-left').addEventListener('click', () => showSpread(currentSpreadIndex - 1));
 document.getElementById('tap-right').addEventListener('click', () => showSpread(currentSpreadIndex + 1));
 document.getElementById('tap-center').addEventListener('click', () => {
-  const isOpen = navMenuPanel.classList.toggle('open');
-  navMenuBtn.classList.toggle('open', isOpen);
+  if (navMenuOverlay.classList.contains('open')) {
+    closeNavMenu();
+  } else {
+    openNavMenu();
+  }
 });
 
 menuSpreadBtn.addEventListener('click', () => {
   spreadModeEnabled = !spreadModeEnabled;
   saveSpreadMode(spreadModeEnabled);
   updateSpreadToggleUI();
-  navMenuPanel.classList.remove('open');
-  navMenuBtn.classList.remove('open');
+  closeNavMenu();
 
   if (currentArchive) {
     const currentFirstPage = spreads[currentSpreadIndex][0];
@@ -688,9 +688,7 @@ stretchResetBtn.addEventListener('click', () => {
 });
 
 menuLibraryBtn.addEventListener('click', () => {
-  navMenuPanel.classList.remove('open');
-  navMenuBtn.classList.remove('open');
-  stretchPanel.classList.remove('open');
+  closeNavMenu();
   objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
   objectURLsInUse = [];
   readerScreen.style.display = 'none';
