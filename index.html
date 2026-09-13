@@ -63,13 +63,6 @@
     display: flex; align-items: center; justify-content: center;
     width: 100%; height: 100%; gap: 12px;
     padding-bottom: max(28px, env(safe-area-inset-bottom));
-    opacity: 1;
-    transition: opacity 0.18s ease-in-out, transform 0.18s ease-in-out;
-    will-change: opacity, transform;
-  }
-  #page-container.changing-page {
-    opacity: 0;
-    transform: scale(0.985);
   }
   #page-image-left, #page-image-right {
     max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
@@ -459,10 +452,6 @@ function getPageBlobFromArchive(archive, name) {
   if (archive.type === 'zip') {
     return archive.zip.files[name].async('blob');
   } else {
-    // All RAR extraction for this archive is funneled through a single
-    // chained queue, so calls from anywhere (showSpread, background
-    // preloading, etc.) never run concurrently against the same shared
-    // extractor — that concurrent access is what corrupts it.
     const run = () => {
       const extracted = archive.rarExtractor.extract({ files: [name] });
       const files = [...extracted.files];
@@ -593,8 +582,6 @@ async function showSpread(spreadIdx) {
   const myRequestId = openRequestId;
   const pageIndices = spreads[spreadIdx];
 
-  pageContainer.classList.add('changing-page');
-
   loadingSpinner.textContent = 'Loading page…';
 
   const timer = setTimeout(() => {
@@ -644,12 +631,6 @@ async function showSpread(spreadIdx) {
 
     clearTimeout(timer);
     loadingSpinner.classList.remove('visible');
-
-    setTimeout(() => {
-      if (myRequestId === openRequestId) {
-        pageContainer.classList.remove('changing-page');
-      }
-    }, 20);
 
     const progress = loadProgress();
     progress[comicKey(myFile)] = pageIndices[0];
