@@ -445,12 +445,14 @@ async function getPageBlobFromArchive(archive, name) {
     const wasmBinary = await loadWasmBinary();
     const rarExtractor = await unrarModule.createExtractorFromData({ data: archive.buf, wasmBinary });
 
-    const extracted = rarExtractor.extract({ files: [name] });
+    const extracted = rarExtractor.extract();
     const files = [...extracted.files];
-    if (!files[0] || !files[0].extraction) {
-      throw new Error(`Could not extract "${name}" from this .cbr — the file may use a RAR format this reader can't decode.`);
+    const match = files.find(f => f.fileHeader && f.fileHeader.name === name);
+
+    if (!match || !match.extraction) {
+      throw new Error(`Could not find "${name}" in this .cbr's extracted contents.`);
     }
-    const data = files[0].extraction;
+    const data = match.extraction;
     const ext = name.split('.').pop().toLowerCase();
     const mime = ext === 'png' ? 'image/png'
       : ext === 'gif' ? 'image/gif'
