@@ -8,66 +8,87 @@
 <style>
   * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
   html, body {
-    margin: 0; padding: 0; height: 100%; background: #000; color: #eee;
-    font-family: -apple-system, sans-serif; overflow: hidden;
+    margin: 0; padding: 0; height: 100%; background: #0b0b0d; color: #eee;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden;
   }
-  #picker-screen {
-    height: 100%; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 20px; padding: 20px;
+  #library-screen { height: 100%; display: flex; flex-direction: column; }
+  #library-header {
+    padding: 20px 20px 12px; display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid #222;
   }
-  #picker-screen h1 { font-size: 20px; font-weight: 600; margin: 0; }
-  #picker-screen p { color: #999; font-size: 14px; text-align: center; max-width: 320px; margin: 0; }
-  #file-input-label {
-    background: #2b6fff; color: white; padding: 14px 28px; border-radius: 12px;
-    font-size: 16px; font-weight: 600; cursor: pointer;
+  #library-header h1 { font-size: 22px; font-weight: 700; margin: 0; }
+  #choose-btn {
+    background: #2b6fff; color: white; border: none; border-radius: 10px;
+    padding: 10px 16px; font-size: 14px; font-weight: 600;
   }
-  #file-input-label.disabled { background: #444; }
-  #file-input { display: none; }
-  #status { color: #888; font-size: 13px; min-height: 18px; text-align: center; max-width: 340px; }
-
+  #library-empty {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; padding: 20px; text-align: center; color: #888;
+  }
+  #library-empty p { max-width: 300px; font-size: 14px; margin: 0; }
+  #library-grid {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 16px; padding: 16px 20px 40px;
+  }
+  .comic-card { cursor: pointer; }
+  .comic-cover {
+    width: 100%; aspect-ratio: 2/3; border-radius: 8px; background: #1c1c1f;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  .comic-cover img { width: 100%; height: 100%; object-fit: cover; }
+  .comic-cover .spinner-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
+  .comic-title {
+    font-size: 12px; color: #ccc; margin-top: 6px; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .progress-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 4px; background: rgba(0,0,0,0.5); }
+  .progress-bar-fill { height: 100%; background: #2b6fff; }
+  #status { color: #888; font-size: 13px; text-align: center; padding: 8px 20px; min-height: 18px; }
   #reader-screen {
     display: none; height: 100%; position: relative;
-    align-items: center; justify-content: center;
+    align-items: center; justify-content: center; background: #000;
   }
-  #page-image {
-    max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
-  }
-  #tap-left, #tap-right {
-    position: absolute; top: 0; bottom: 0; width: 33%; z-index: 5;
-  }
+  #page-image { max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation; }
+  #tap-left, #tap-right { position: absolute; top: 0; bottom: 0; width: 33%; z-index: 5; }
   #tap-left { left: 0; } #tap-right { right: 0; }
-  #tap-center {
-    position: absolute; top: 0; bottom: 0; left: 33%; right: 33%; z-index: 5;
-  }
+  #tap-center { position: absolute; top: 0; bottom: 0; left: 33%; right: 33%; z-index: 5; }
   #page-counter {
     position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
-    background: rgba(0,0,0,0.6); padding: 6px 14px; border-radius: 20px;
+    background: rgba(0,0,0,0.65); padding: 6px 14px; border-radius: 20px;
     font-size: 13px; z-index: 10; pointer-events: none;
   }
   #close-btn {
-    position: absolute; top: 14px; right: 14px; z-index: 10;
-    background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 20px;
+    position: absolute; top: 14px; left: 14px; z-index: 10;
+    background: rgba(0,0,0,0.65); color: white; border: none; border-radius: 20px;
     padding: 8px 16px; font-size: 14px;
   }
   #loading-spinner {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-    color: #666; font-size: 14px; z-index: 20;
-    max-width: 80%; text-align: center;
+    color: #888; font-size: 14px; z-index: 20; max-width: 80%; text-align: center;
   }
+  input[type="file"] { display: none; }
 </style>
 </head>
 <body>
 
-<div id="picker-screen">
-  <h1>USB Comic Reader</h1>
-  <p>Pick a .cbz or .cbr file directly from your USB drive. It stays on the drive — nothing is copied to this iPad.</p>
-  <label id="file-input-label" for="file-input">Choose Comic File</label>
-  <input type="file" id="file-input" accept="*/*">
+<div id="library-screen">
+  <div id="library-header">
+    <h1>My Comics</h1>
+    <label id="choose-btn" for="file-input">Choose Comics</label>
+    <input type="file" id="file-input" accept="*/*" multiple>
+  </div>
   <div id="status"></div>
+  <div id="library-empty">
+    <p>Select .cbz and .cbr files straight from your USB drive. They stay on the drive — nothing is copied to this iPad.</p>
+    <label id="choose-btn-2" for="file-input" style="background:#2b6fff;color:white;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;">Choose Comics</label>
+  </div>
+  <div id="library-grid" style="display:none;"></div>
 </div>
 
 <div id="reader-screen">
-  <button id="close-btn">Close</button>
+  <button id="close-btn">‹ Library</button>
   <div id="loading-spinner">Loading page…</div>
   <img id="page-image" style="display:none;">
   <div id="tap-left"></div>
@@ -77,71 +98,87 @@
 </div>
 
 <script>
-let archiveType = null;
-let zip = null;
-let rarExtractor = null;
-let pageNames = [];
-let currentPage = 0;
-let currentObjectURL = null;
+const PROGRESS_KEY = 'usbComicReaderProgress';
+function loadProgress() {
+  try { return JSON.parse(localStorage.getItem(PROGRESS_KEY)) || {}; } catch { return {}; }
+}
+function saveProgress(map) { localStorage.setItem(PROGRESS_KEY, JSON.stringify(map)); }
+function comicKey(file) { return `${file.name}_${file.size}`; }
 
-const pickerScreen = document.getElementById('picker-screen');
-const readerScreen = document.getElementById('reader-screen');
+let libraryFiles = [];
+
 const fileInput = document.getElementById('file-input');
 const statusEl = document.getElementById('status');
-const pageImage = document.getElementById('page-image');
-const pageCounter = document.getElementById('page-counter');
-const loadingSpinner = document.getElementById('loading-spinner');
-const closeBtn = document.getElementById('close-btn');
-
-const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp)$/i;
+const libraryEmpty = document.getElementById('library-empty');
+const libraryGrid = document.getElementById('library-grid');
 
 fileInput.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
+  const files = Array.from(e.target.files);
+  if (files.length === 0) return;
 
-  const lowerName = file.name.toLowerCase();
-  const isRar = lowerName.endsWith('.cbr') || lowerName.endsWith('.rar');
-  const isZip = lowerName.endsWith('.cbz') || lowerName.endsWith('.zip');
+  libraryFiles = files;
+  libraryEmpty.style.display = 'none';
+  libraryGrid.style.display = 'grid';
+  libraryGrid.innerHTML = '';
 
-  statusEl.textContent = 'Opening archive…';
+  const progress = loadProgress();
 
-  try {
-    if (isRar) {
-      await openRar(file);
-    } else if (isZip) {
-      await openZip(file);
-    } else {
-      try {
-        await openZip(file);
-      } catch (zipErr) {
-        await openRar(file);
-      }
-    }
+  files.forEach((file) => {
+    const card = document.createElement('div');
+    card.className = 'comic-card';
 
-    if (pageNames.length === 0) {
-      statusEl.textContent = 'No image pages found in that archive.';
-      return;
-    }
+    const cover = document.createElement('div');
+    cover.className = 'comic-cover';
+    const dot = document.createElement('div');
+    dot.className = 'spinner-dot';
+    cover.appendChild(dot);
 
-    currentPage = 0;
-    pickerScreen.style.display = 'none';
-    readerScreen.style.display = 'flex';
-    await showPage(currentPage);
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = 'Could not open that file: ' + err.message;
-  }
+    const title = document.createElement('div');
+    title.className = 'comic-title';
+    title.textContent = file.name.replace(/\.(cbz|cbr|zip|rar)$/i, '');
+
+    card.appendChild(cover);
+    card.appendChild(title);
+    libraryGrid.appendChild(card);
+
+    card.addEventListener('click', () => openComic(file));
+
+    loadCoverThumbnail(file, cover, progress);
+  });
 });
 
-async function openZip(file) {
-  archiveType = 'zip';
-  zip = await JSZip.loadAsync(file);
-  pageNames = Object.values(zip.files)
-    .filter(f => !f.dir && IMAGE_EXT.test(f.name))
-    .map(f => f.name)
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+async function loadCoverThumbnail(file, coverEl, progress) {
+  try {
+    const opened = await openArchive(file);
+    if (opened.pageNames.length === 0) return;
+
+    const blob = await getPageBlobFromArchive(opened, opened.pageNames[0]);
+    const url = URL.createObjectURL(blob);
+    const img = document.createElement('img');
+    img.src = url;
+    coverEl.innerHTML = '';
+    coverEl.appendChild(img);
+
+    const key = comicKey(file);
+    if (progress[key] && opened.pageNames.length > 1) {
+      const pct = Math.round(((progress[key] + 1) / opened.pageNames.length) * 100);
+      const bar = document.createElement('div');
+      bar.className = 'progress-bar';
+      const fill = document.createElement('div');
+      fill.className = 'progress-bar-fill';
+      fill.style.width = pct + '%';
+      bar.appendChild(fill);
+      coverEl.appendChild(bar);
+    }
+
+    file.__cachedArchive = opened;
+  } catch (err) {
+    console.error('Cover failed for', file.name, err);
+    coverEl.innerHTML = '<span style="font-size:11px;color:#666;padding:6px;text-align:center;">Couldn\'t read</span>';
+  }
 }
 
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp)$/i;
 let unrarModulePromise = null;
 function loadUnrarModule() {
   if (!unrarModulePromise) {
@@ -150,31 +187,54 @@ function loadUnrarModule() {
   return unrarModulePromise;
 }
 
+async function openArchive(file) {
+  if (file.__cachedArchive) return file.__cachedArchive;
+
+  const lowerName = file.name.toLowerCase();
+  const isRar = lowerName.endsWith('.cbr') || lowerName.endsWith('.rar');
+
+  let result;
+  if (isRar) {
+    result = await openRar(file);
+  } else {
+    try {
+      result = await openZip(file);
+    } catch {
+      result = await openRar(file);
+    }
+  }
+  return result;
+}
+
+async function openZip(file) {
+  const zip = await JSZip.loadAsync(file);
+  const pageNames = Object.values(zip.files)
+    .filter(f => !f.dir && IMAGE_EXT.test(f.name))
+    .map(f => f.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return { type: 'zip', zip, pageNames };
+}
+
 async function openRar(file) {
-  statusEl.textContent = 'Loading RAR support…';
   const unrarModule = await loadUnrarModule();
-
-  archiveType = 'rar';
   const buf = await file.arrayBuffer();
-
   const wasmResp = await fetch('https://cdn.jsdelivr.net/npm/node-unrar-js@2.0.2/esm/js/unrar.wasm');
   const wasmBinary = await wasmResp.arrayBuffer();
-
-  rarExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
-
+  const rarExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
   const list = rarExtractor.getFileList();
   const headers = [...list.fileHeaders];
-  pageNames = headers
+  const pageNames = headers
     .filter(h => !h.flags.directory && IMAGE_EXT.test(h.name))
     .map(h => h.name)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return { type: 'rar', rarExtractor, pageNames };
 }
 
-async function getPageBlob(name) {
-  if (archiveType === 'zip') {
-    return await zip.files[name].async('blob');
+async function getPageBlobFromArchive(archive, name) {
+  if (archive.type === 'zip') {
+    return await archive.zip.files[name].async('blob');
   } else {
-    const extracted = rarExtractor.extract({ files: [name] });
+    const extracted = archive.rarExtractor.extract({ files: [name] });
     const files = [...extracted.files];
     const data = files[0].extraction;
     const ext = name.split('.').pop().toLowerCase();
@@ -186,8 +246,41 @@ async function getPageBlob(name) {
   }
 }
 
+const libraryScreen = document.getElementById('library-screen');
+const readerScreen = document.getElementById('reader-screen');
+const pageImage = document.getElementById('page-image');
+const pageCounter = document.getElementById('page-counter');
+const loadingSpinner = document.getElementById('loading-spinner');
+const closeBtn = document.getElementById('close-btn');
+
+let currentArchive = null;
+let currentFile = null;
+let currentPage = 0;
+let currentObjectURL = null;
+
+async function openComic(file) {
+  statusEl.textContent = 'Opening ' + file.name + '…';
+  try {
+    const archive = await openArchive(file);
+    currentArchive = archive;
+    currentFile = file;
+
+    const progress = loadProgress();
+    const savedPage = progress[comicKey(file)] || 0;
+    currentPage = Math.min(savedPage, archive.pageNames.length - 1);
+
+    libraryScreen.style.display = 'none';
+    readerScreen.style.display = 'flex';
+    statusEl.textContent = '';
+    await showPage(currentPage);
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Could not open ' + file.name + ': ' + err.message;
+  }
+}
+
 async function showPage(index) {
-  if (index < 0 || index >= pageNames.length) return;
+  if (index < 0 || index >= currentArchive.pageNames.length) return;
   currentPage = index;
 
   loadingSpinner.textContent = 'Loading page…';
@@ -195,7 +288,7 @@ async function showPage(index) {
   pageImage.style.display = 'none';
 
   try {
-    const blob = await getPageBlob(pageNames[index]);
+    const blob = await getPageBlobFromArchive(currentArchive, currentArchive.pageNames[index]);
 
     if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
     currentObjectURL = URL.createObjectURL(blob);
@@ -206,7 +299,11 @@ async function showPage(index) {
       pageImage.style.display = 'block';
     };
 
-    pageCounter.textContent = `${index + 1} / ${pageNames.length}`;
+    pageCounter.textContent = `${index + 1} / ${currentArchive.pageNames.length}`;
+
+    const progress = loadProgress();
+    progress[comicKey(currentFile)] = index;
+    saveProgress(progress);
   } catch (err) {
     console.error(err);
     loadingSpinner.textContent = 'Error loading page: ' + err.message;
@@ -221,14 +318,29 @@ document.getElementById('tap-center').addEventListener('click', () => {
 
 closeBtn.addEventListener('click', () => {
   if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
-  zip = null;
-  rarExtractor = null;
-  archiveType = null;
-  pageNames = [];
   readerScreen.style.display = 'none';
-  pickerScreen.style.display = 'flex';
-  fileInput.value = '';
-  statusEl.textContent = '';
+  libraryScreen.style.display = 'flex';
+
+  const progress = loadProgress();
+  const cards = libraryGrid.querySelectorAll('.comic-card');
+  cards.forEach((card, i) => {
+    const file = libraryFiles[i];
+    if (!file || !file.__cachedArchive) return;
+    const key = comicKey(file);
+    const total = file.__cachedArchive.pageNames.length;
+    if (progress[key] !== undefined && total > 1) {
+      const cover = card.querySelector('.comic-cover');
+      let bar = cover.querySelector('.progress-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.className = 'progress-bar';
+        bar.innerHTML = '<div class="progress-bar-fill"></div>';
+        cover.appendChild(bar);
+      }
+      const pct = Math.round(((progress[key] + 1) / total) * 100);
+      bar.querySelector('.progress-bar-fill').style.width = pct + '%';
+    }
+  });
 });
 </script>
 
