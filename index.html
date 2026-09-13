@@ -60,7 +60,7 @@
   <h1>USB Comic Reader</h1>
   <p>Pick a .cbz file directly from your USB drive. It stays on the drive — nothing is copied to this iPad.</p>
   <label id="file-input-label" for="file-input">Choose Comic File</label>
-  <input type="file" id="file-input" accept=".cbz,.zip">
+  <input type="file" id="file-input" accept="*/*">
   <div id="status"></div>
 </div>
 
@@ -76,7 +76,7 @@
 
 <script>
 let zip = null;
-let pageEntries = []; // sorted zip entries that are images
+let pageEntries = [];
 let currentPage = 0;
 let currentObjectURL = null;
 
@@ -98,11 +98,6 @@ fileInput.addEventListener('change', async (e) => {
   statusEl.textContent = 'Opening archive…';
 
   try {
-    // NOTE: JSZip.loadAsync reads the file's bytes via the browser's Blob/File
-    // interface. The File object here is a live reference to the picked file —
-    // this does not copy it into app/browser storage first. JSZip parses the
-    // zip's central directory to build the entry list without decompressing
-    // every entry up front.
     zip = await JSZip.loadAsync(file);
 
     pageEntries = Object.values(zip.files)
@@ -131,7 +126,6 @@ async function showPage(index) {
   loadingSpinner.style.display = 'block';
   pageImage.style.display = 'none';
 
-  // Decode only this one page's bytes, on demand.
   const entry = pageEntries[index];
   const blob = await entry.async('blob');
 
@@ -146,7 +140,6 @@ async function showPage(index) {
 
   pageCounter.textContent = `${index + 1} / ${pageEntries.length}`;
 
-  // Prefetch next page's blob in the background (still on-demand, just one ahead)
   if (index + 1 < pageEntries.length) {
     pageEntries[index + 1].async('blob').catch(() => {});
   }
