@@ -63,6 +63,13 @@
     display: flex; align-items: center; justify-content: center;
     width: 100%; height: 100%; gap: 12px;
     padding-bottom: max(28px, env(safe-area-inset-bottom));
+    opacity: 1;
+    transition: opacity 0.18s ease-in-out, transform 0.18s ease-in-out;
+    will-change: opacity, transform;
+  }
+  #page-container.changing-page {
+    opacity: 0;
+    transform: scale(0.985);
   }
   #page-image-left, #page-image-right {
     max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
@@ -105,7 +112,7 @@
   #loading-spinner {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
     color: #888; font-size: 14px; z-index: 20; max-width: 80%; text-align: center;
-    pointer-events: none; opacity: 0;
+    pointer-events: none; opacity: 0; transition: opacity 0.2s ease;
   }
   #loading-spinner.visible { opacity: 1; }
   input[type="file"] { display: none; }
@@ -445,25 +452,34 @@ async function openRar(file) {
     .filter(h => !h.flags.directory && isValidImageFile(h.name))
     .map(h => h.name)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return { type: 'rar', rarExtractor, pageNames };
+  return { type: 'rar', rarExtractor, rarQueue: Promise.resolve(), pageNames };
 }
 
-async function getPageBlobFromArchive(archive, name) {
+function getPageBlobFromArchive(archive, name) {
   if (archive.type === 'zip') {
-    return await archive.zip.files[name].async('blob');
+    return archive.zip.files[name].async('blob');
   } else {
-    const extracted = archive.rarExtractor.extract({ files: [name] });
-    const files = [...extracted.files];
-    if (!files[0] || !files[0].extraction) {
-      throw new Error(`Could not read page "${name}" from this .cbr.`);
-    }
-    const data = files[0].extraction;
-    const ext = name.split('.').pop().toLowerCase();
-    const mime = ext === 'png' ? 'image/png'
-      : ext === 'gif' ? 'image/gif'
-      : ext === 'webp' ? 'image/webp'
-      : 'image/jpeg';
-    return new Blob([data], { type: mime });
+    // All RAR extraction for this archive is funneled through a single
+    // chained queue, so calls from anywhere (showSpread, background
+    // preloading, etc.) never run concurrently against the same shared
+    // extractor — that concurrent access is what corrupts it.
+    const run = () => {
+      const extracted = archive.rarExtractor.extract({ files: [name] });
+      const files = [...extracted.files];
+      if (!files[0] || !files[0].extraction) {
+        throw new Error(`Could not read page "${name}" from this .cbr.`);
+      }
+      const data = files[0].extraction;
+      const ext = name.split('.').pop().toLowerCase();
+      const mime = ext === 'png' ? 'image/png'
+        : ext === 'gif' ? 'image/gif'
+        : ext === 'webp' ? 'image/webp'
+        : 'image/jpeg';
+      return new Blob([data], { type: mime });
+    };
+    const result = archive.rarQueue.then(run);
+    archive.rarQueue = result.catch(() => {});
+    return result;
   }
 }
 
@@ -557,15 +573,16 @@ async function preloadNextSpread(spreadIdx) {
   const nextIdx = spreadIdx + 1;
   if (nextIdx >= spreads.length || !currentArchive) return;
   const pageIndices = spreads[nextIdx];
-  pageIndices.forEach(async (i) => {
+  const myArchive = currentArchive;
+  for (const i of pageIndices) {
     if (!preloadedBlobs[i]) {
       try {
-        preloadedBlobs[i] = await getPageBlobFromArchive(currentArchive, currentArchive.pageNames[i]);
+        preloadedBlobs[i] = await getPageBlobFromArchive(myArchive, myArchive.pageNames[i]);
       } catch (err) {
         console.warn('Preload failed for page', i, err);
       }
     }
-  });
+  }
 }
 
 async function showSpread(spreadIdx) {
@@ -576,8 +593,10 @@ async function showSpread(spreadIdx) {
   const myRequestId = openRequestId;
   const pageIndices = spreads[spreadIdx];
 
+  pageContainer.classList.add('changing-page');
+
   loadingSpinner.textContent = 'Loading page…';
-  
+
   const timer = setTimeout(() => {
     if (myRequestId === openRequestId) {
       loadingSpinner.classList.add('visible');
@@ -585,16 +604,15 @@ async function showSpread(spreadIdx) {
   }, 200);
 
   try {
-    const blobs = await Promise.all(
-      pageIndices.map(async (i) => {
-        if (preloadedBlobs[i]) {
-          const b = preloadedBlobs[i];
-          delete preloadedBlobs[i];
-          return b;
-        }
-        return await getPageBlobFromArchive(myArchive, myArchive.pageNames[i]);
-      })
-    );
+    const blobs = [];
+    for (const i of pageIndices) {
+      if (preloadedBlobs[i]) {
+        blobs.push(preloadedBlobs[i]);
+        delete preloadedBlobs[i];
+      } else {
+        blobs.push(await getPageBlobFromArchive(myArchive, myArchive.pageNames[i]));
+      }
+    }
     if (myRequestId !== openRequestId) {
       clearTimeout(timer);
       return;
@@ -626,6 +644,12 @@ async function showSpread(spreadIdx) {
 
     clearTimeout(timer);
     loadingSpinner.classList.remove('visible');
+
+    setTimeout(() => {
+      if (myRequestId === openRequestId) {
+        pageContainer.classList.remove('changing-page');
+      }
+    }, 20);
 
     const progress = loadProgress();
     progress[comicKey(myFile)] = pageIndices[0];
