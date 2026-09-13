@@ -1,8 +1,14 @@
+Here's the full code, ready to copy and paste directly into `comic-reader.html` on GitHub:
+
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Comics">
 <title>USB Comic Reader</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
@@ -46,14 +52,28 @@
   .progress-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 4px; background: rgba(0,0,0,0.5); }
   .progress-bar-fill { height: 100%; background: #2b6fff; }
   #status { color: #888; font-size: 13px; text-align: center; padding: 8px 20px; min-height: 18px; }
+
   #reader-screen {
     display: none; height: 100%; position: relative;
     align-items: center; justify-content: center; background: #000;
   }
-  #page-image { max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation; }
-  #tap-left, #tap-right { position: absolute; top: 0; bottom: 0; width: 33%; z-index: 5; }
+  #page-container {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%; gap: 2px;
+  }
+  #page-image-left, #page-image-right {
+    max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
+  }
+  .spread-mode #page-image-left, .spread-mode #page-image-right {
+    max-width: calc(50% - 1px); flex: 1 1 50%;
+  }
+  #tap-left, #tap-right {
+    position: absolute; top: 0; bottom: 0; width: 33%; z-index: 5;
+  }
   #tap-left { left: 0; } #tap-right { right: 0; }
-  #tap-center { position: absolute; top: 0; bottom: 0; left: 33%; right: 33%; z-index: 5; }
+  #tap-center {
+    position: absolute; top: 0; bottom: 0; left: 33%; right: 33%; z-index: 5;
+  }
   #page-counter {
     position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
     background: rgba(0,0,0,0.65); padding: 6px 14px; border-radius: 20px;
@@ -61,6 +81,17 @@
   }
   #close-btn {
     position: absolute; top: 14px; left: 14px; z-index: 10;
+    background: rgba(0,0,0,0.65); color: white; border: none; border-radius: 20px;
+    padding: 8px 16px; font-size: 14px;
+  }
+  #spread-toggle-btn {
+    position: absolute; top: 14px; right: 14px; z-index: 10;
+    background: rgba(0,0,0,0.65); color: white; border: none; border-radius: 20px;
+    padding: 8px 16px; font-size: 14px;
+  }
+  #spread-toggle-btn.active { background: #2b6fff; }
+  #fullscreen-btn {
+    position: absolute; top: 14px; right: 110px; z-index: 10;
     background: rgba(0,0,0,0.65); color: white; border: none; border-radius: 20px;
     padding: 8px 16px; font-size: 14px;
   }
@@ -89,8 +120,13 @@
 
 <div id="reader-screen">
   <button id="close-btn">‹ Library</button>
+  <button id="fullscreen-btn">⛶ Full Screen</button>
+  <button id="spread-toggle-btn">Two-Page</button>
   <div id="loading-spinner">Loading page…</div>
-  <img id="page-image" style="display:none;">
+  <div id="page-container">
+    <img id="page-image-left" style="display:none;">
+    <img id="page-image-right" style="display:none;">
+  </div>
   <div id="tap-left"></div>
   <div id="tap-center"></div>
   <div id="tap-right"></div>
@@ -99,11 +135,16 @@
 
 <script>
 const PROGRESS_KEY = 'usbComicReaderProgress';
+const SPREAD_MODE_KEY = 'usbComicReaderSpreadMode';
+
 function loadProgress() {
   try { return JSON.parse(localStorage.getItem(PROGRESS_KEY)) || {}; } catch { return {}; }
 }
 function saveProgress(map) { localStorage.setItem(PROGRESS_KEY, JSON.stringify(map)); }
 function comicKey(file) { return `${file.name}_${file.size}`; }
+
+function loadSpreadMode() { return localStorage.getItem(SPREAD_MODE_KEY) === 'true'; }
+function saveSpreadMode(val) { localStorage.setItem(SPREAD_MODE_KEY, val ? 'true' : 'false'); }
 
 let libraryFiles = [];
 
@@ -113,17 +154,19 @@ const libraryEmpty = document.getElementById('library-empty');
 const libraryGrid = document.getElementById('library-grid');
 
 fileInput.addEventListener('change', async (e) => {
-  const files = Array.from(e.target.files);
-  if (files.length === 0) return;
+  const newFiles = Array.from(e.target.files);
+  if (newFiles.length === 0) return;
 
-  libraryFiles = files;
+  const existingKeys = new Set(libraryFiles.map(f => comicKey(f)));
+  const filesToAdd = newFiles.filter(f => !existingKeys.has(comicKey(f)));
+
+  libraryFiles = libraryFiles.concat(filesToAdd);
   libraryEmpty.style.display = 'none';
   libraryGrid.style.display = 'grid';
-  libraryGrid.innerHTML = '';
 
   const progress = loadProgress();
 
-  files.forEach((file) => {
+  filesToAdd.forEach((file) => {
     const card = document.createElement('div');
     card.className = 'comic-card';
 
@@ -248,76 +291,165 @@ async function getPageBlobFromArchive(archive, name) {
 
 const libraryScreen = document.getElementById('library-screen');
 const readerScreen = document.getElementById('reader-screen');
-const pageImage = document.getElementById('page-image');
+const pageContainer = document.getElementById('page-container');
+const pageImageLeft = document.getElementById('page-image-left');
+const pageImageRight = document.getElementById('page-image-right');
 const pageCounter = document.getElementById('page-counter');
 const loadingSpinner = document.getElementById('loading-spinner');
 const closeBtn = document.getElementById('close-btn');
+const spreadToggleBtn = document.getElementById('spread-toggle-btn');
+const fullscreenBtn = document.getElementById('fullscreen-btn');
+
+fullscreenBtn.addEventListener('click', async () => {
+  try {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen();
+      fullscreenBtn.textContent = '⛶ Exit Full Screen';
+    } else {
+      await document.exitFullscreen();
+      fullscreenBtn.textContent = '⛶ Full Screen';
+    }
+  } catch (err) {
+    statusEl && (statusEl.textContent = '');
+    alert('Full screen isn\'t available here — for the best full-screen experience, add this page to your Home Screen (Share button → Add to Home Screen) and launch it from there instead.');
+  }
+});
 
 let currentArchive = null;
 let currentFile = null;
-let currentPage = 0;
-let currentObjectURL = null;
+let spreads = [];
+let currentSpreadIndex = 0;
+let spreadModeEnabled = loadSpreadMode();
+let openRequestId = 0;
+let objectURLsInUse = [];
+
+function updateSpreadToggleUI() {
+  spreadToggleBtn.classList.toggle('active', spreadModeEnabled);
+  readerScreen.classList.toggle('spread-mode', spreadModeEnabled);
+}
+updateSpreadToggleUI();
+
+function buildSpreads(pageCount, enabled) {
+  const result = [];
+  if (pageCount === 0) return result;
+  if (!enabled) {
+    for (let i = 0; i < pageCount; i++) result.push([i]);
+    return result;
+  }
+  result.push([0]);
+  for (let i = 1; i < pageCount; i += 2) {
+    if (i + 1 < pageCount) result.push([i, i + 1]);
+    else result.push([i]);
+  }
+  return result;
+}
+
+function spreadIndexForPage(pageNum) {
+  for (let i = 0; i < spreads.length; i++) {
+    if (spreads[i].includes(pageNum)) return i;
+  }
+  return 0;
+}
 
 async function openComic(file) {
+  const myRequestId = ++openRequestId;
   statusEl.textContent = 'Opening ' + file.name + '…';
   try {
     const archive = await openArchive(file);
+    if (myRequestId !== openRequestId) return;
+
     currentArchive = archive;
     currentFile = file;
+    spreads = buildSpreads(archive.pageNames.length, spreadModeEnabled);
 
     const progress = loadProgress();
     const savedPage = progress[comicKey(file)] || 0;
-    currentPage = Math.min(savedPage, archive.pageNames.length - 1);
+    currentSpreadIndex = spreadIndexForPage(Math.min(savedPage, archive.pageNames.length - 1));
 
     libraryScreen.style.display = 'none';
     readerScreen.style.display = 'flex';
     statusEl.textContent = '';
-    await showPage(currentPage);
+    await showSpread(currentSpreadIndex);
   } catch (err) {
+    if (myRequestId !== openRequestId) return;
     console.error(err);
     statusEl.textContent = 'Could not open ' + file.name + ': ' + err.message;
   }
 }
 
-async function showPage(index) {
-  if (index < 0 || index >= currentArchive.pageNames.length) return;
-  currentPage = index;
+async function showSpread(spreadIdx) {
+  if (spreadIdx < 0 || spreadIdx >= spreads.length) return;
+  currentSpreadIndex = spreadIdx;
+  const myArchive = currentArchive;
+  const myFile = currentFile;
+  const myRequestId = openRequestId;
+  const pageIndices = spreads[spreadIdx];
 
   loadingSpinner.textContent = 'Loading page…';
   loadingSpinner.style.display = 'block';
-  pageImage.style.display = 'none';
+  pageImageLeft.style.display = 'none';
+  pageImageRight.style.display = 'none';
 
   try {
-    const blob = await getPageBlobFromArchive(currentArchive, currentArchive.pageNames[index]);
+    const blobs = await Promise.all(
+      pageIndices.map(i => getPageBlobFromArchive(myArchive, myArchive.pageNames[i]))
+    );
+    if (myRequestId !== openRequestId) return;
 
-    if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
-    currentObjectURL = URL.createObjectURL(blob);
+    objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
+    objectURLsInUse = [];
 
-    pageImage.src = currentObjectURL;
-    pageImage.onload = () => {
-      loadingSpinner.style.display = 'none';
-      pageImage.style.display = 'block';
-    };
+    const urls = blobs.map(b => URL.createObjectURL(b));
+    objectURLsInUse = urls;
 
-    pageCounter.textContent = `${index + 1} / ${currentArchive.pageNames.length}`;
+    pageImageLeft.src = urls[0];
+    pageImageLeft.style.display = 'block';
+
+    if (urls.length > 1) {
+      pageImageRight.src = urls[1];
+      pageImageRight.style.display = 'block';
+    } else {
+      pageImageRight.style.display = 'none';
+    }
+
+    loadingSpinner.style.display = 'none';
+
+    pageCounter.textContent = pageIndices.length === 2
+      ? `${pageIndices[0] + 1}-${pageIndices[1] + 1} / ${myArchive.pageNames.length}`
+      : `${pageIndices[0] + 1} / ${myArchive.pageNames.length}`;
 
     const progress = loadProgress();
-    progress[comicKey(currentFile)] = index;
+    progress[comicKey(myFile)] = pageIndices[0];
     saveProgress(progress);
   } catch (err) {
     console.error(err);
     loadingSpinner.textContent = 'Error loading page: ' + err.message;
+    loadingSpinner.style.display = 'block';
   }
 }
 
-document.getElementById('tap-left').addEventListener('click', () => showPage(currentPage - 1));
-document.getElementById('tap-right').addEventListener('click', () => showPage(currentPage + 1));
+document.getElementById('tap-left').addEventListener('click', () => showSpread(currentSpreadIndex - 1));
+document.getElementById('tap-right').addEventListener('click', () => showSpread(currentSpreadIndex + 1));
 document.getElementById('tap-center').addEventListener('click', () => {
   pageCounter.style.display = pageCounter.style.display === 'none' ? 'block' : 'none';
 });
 
+spreadToggleBtn.addEventListener('click', () => {
+  spreadModeEnabled = !spreadModeEnabled;
+  saveSpreadMode(spreadModeEnabled);
+  updateSpreadToggleUI();
+
+  if (currentArchive) {
+    const currentFirstPage = spreads[currentSpreadIndex][0];
+    spreads = buildSpreads(currentArchive.pageNames.length, spreadModeEnabled);
+    currentSpreadIndex = spreadIndexForPage(currentFirstPage);
+    showSpread(currentSpreadIndex);
+  }
+});
+
 closeBtn.addEventListener('click', () => {
-  if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
+  objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
+  objectURLsInUse = [];
   readerScreen.style.display = 'none';
   libraryScreen.style.display = 'flex';
 
@@ -346,3 +478,4 @@ closeBtn.addEventListener('click', () => {
 
 </body>
 </html>
+```
