@@ -1,1059 +1,354 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="Comics">
-<title>USB Comic Reader</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<style>
-  * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
-  html, body {
-    margin: 0; padding: 0; height: 100%; background: #0b0b0d; color: #eee;
-    font-family: -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden;
-  }
-  #library-screen { height: 100%; display: flex; flex-direction: column; }
-  #library-header {
-    padding: 20px 20px 12px; display: flex; align-items: center; justify-content: space-between;
-    border-bottom: 1px solid #222;
-  }
-  #library-header h1 { font-size: 22px; font-weight: 700; margin: 0; }
-  .icon-btn {
-    background: rgba(255,255,255,0.08); color: white; border: none; border-radius: 10px;
-    width: 40px; height: 40px; font-size: 16px; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-  }
-  #library-empty {
-    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 16px; padding: 20px; text-align: center; color: #888;
-  }
-  #library-empty p { max-width: 300px; font-size: 14px; margin: 0; }
-  #library-grid {
-    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
-    display: grid; grid-template-columns: repeat(4, 1fr);
-    gap: 16px; padding: 16px 20px 40px;
-  }
-  @media (orientation: landscape) {
-    #library-grid { grid-template-columns: repeat(6, 1fr); }
-  }
-  .comic-card { cursor: pointer; }
-  .comic-cover {
-    width: 100%; aspect-ratio: 2/3; border-radius: 8px; background: #1c1c1f;
-    display: flex; align-items: center; justify-content: center; overflow: hidden;
-    position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-  }
-  .comic-cover img { width: 100%; height: 100%; object-fit: cover; }
-  .comic-cover .spinner-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
-  .comic-cover.needs-reselect { opacity: 0.55; }
-  .comic-cover .reselect-badge {
-    position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.75);
-    border-radius: 10px; padding: 3px 7px; font-size: 10px; color: #ccc;
-  }
-  .comic-title {
-    font-size: 12px; color: #ccc; margin-top: 6px; line-height: 1.3;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  }
-  .progress-track { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 5px; overflow: hidden; }
-  .progress-track-fill { height: 100%; background: #2b6fff; }
-  .comic-card.selectable .comic-cover { opacity: 0.85; }
-  .comic-card.selected .comic-cover { outline: 3px solid #2b6fff; outline-offset: 2px; }
-  .selection-checkmark {
-    display: none; position: absolute; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: 50%;
-    background: rgba(0,0,0,0.6); border: 2px solid #fff; align-items: center; justify-content: center;
-    color: transparent; font-size: 13px; font-weight: 700;
-  }
-  #library-grid.selecting .selection-checkmark { display: flex; }
-  .comic-card.selected .selection-checkmark { background: #2b6fff; color: white; }
-  #undo-toast {
-    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
-    background: #1c1c1f; color: #eee; padding: 12px 16px; border-radius: 12px;
-    display: none; align-items: center; gap: 14px; font-size: 14px; z-index: 50;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
-  }
-  #undo-toast.visible { display: flex; opacity: 1; transform: translateX(-50%) translateY(0); }
-  #undo-toast button {
-    background: none; border: none; color: #4d8dff; font-size: 14px; font-weight: 600; cursor: pointer;
-  }
-  #status { color: #888; font-size: 13px; text-align: center; padding: 8px 20px; min-height: 18px; }
+  <meta charset="UTF-8">
+  <title>Comic Reader</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #121212; color: #fff; height: 100vh; overflow: hidden; }
+    
+    /* Layout Screens */
+    #libraryScreen, #readerScreen { width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+    #libraryScreen { padding: 20px; background: #1a1a1a; overflow-y: auto; }
+    #readerScreen { display: none; position: relative; background: #000; }
 
-  #reader-screen {
-    display: none; height: 100%; position: relative;
-    align-items: center; justify-content: center; background: #000;
-  }
-  #page-container {
-    display: flex; align-items: center; justify-content: center;
-    width: 100%; height: 100%; gap: 12px;
-    padding-bottom: max(28px, env(safe-area-inset-bottom));
-  }
-  #page-image-left, #page-image-right {
-    max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
-  }
-  #page-container img { display: block; }
-  #tap-left, #tap-right { position: absolute; top: 0; bottom: 0; width: 33%; z-index: 5; }
-  #tap-left { left: 0; } #tap-right { right: 0; }
-  #tap-center { position: absolute; top: 0; bottom: 0; left: 33%; right: 33%; z-index: 5; }
-  #nav-menu-overlay {
-    display: none; position: absolute; inset: 0; z-index: 15;
-    background: rgba(0,0,0,0.4);
-    align-items: center; justify-content: center;
-  }
-  #nav-menu-overlay.open { display: flex; }
-  #nav-menu-panel {
-    background: rgba(24,24,26,0.97); border-radius: 18px; padding: 8px;
-    min-width: 220px; box-shadow: 0 8px 30px rgba(0,0,0,0.6);
-  }
-  #nav-menu-panel button {
-    background: none; border: none; color: white; text-align: left;
-    padding: 14px 16px; font-size: 15px; border-radius: 10px; width: 100%;
-    display: flex; align-items: center; gap: 12px; cursor: pointer;
-  }
-  #nav-menu-panel button .icon { font-size: 18px; width: 22px; text-align: center; }
-  #nav-menu-panel button.active { background: #2b6fff; }
-  #nav-menu-panel button:active { background: rgba(255,255,255,0.1); }
-  #stretch-panel {
-    display: none; padding: 12px 14px 8px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 4px;
-  }
-  #stretch-panel.open { display: block; }
-  #stretch-panel label {
-    display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; margin-top: 10px;
-  }
-  #stretch-panel label:first-child { margin-top: 0; }
-  #stretch-panel input[type="range"] { width: 100%; }
-  #stretch-reset-btn {
-    background: rgba(255,255,255,0.08); border: none; color: white; width: 100%;
-    padding: 8px; border-radius: 8px; font-size: 13px; margin-top: 10px; cursor: pointer;
-  }
-  #loading-spinner {
-    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-    color: #888; font-size: 14px; z-index: 20; max-width: 80%; text-align: center;
-    pointer-events: none; opacity: 0; transition: opacity 0.2s ease;
-  }
-  #loading-spinner.visible { opacity: 1; }
-  input[type="file"] { display: none; }
-  #gate-overlay {
-    position: fixed; inset: 0; background: #0b0b0d; z-index: 100;
-    display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px;
-  }
-  #gate-overlay h1 { color: #eee; font-size: 18px; font-weight: 600; margin: 0; }
-  #gate-input {
-    background: #1c1c1f; border: 1px solid #333; color: #fff; font-size: 18px;
-    padding: 12px 16px; border-radius: 10px; width: 200px; text-align: center; letter-spacing: 4px;
-  }
-  #gate-submit {
-    background: #2b6fff; color: white; border: none; border-radius: 10px;
-    padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
-  }
-  #gate-error { color: #e24b4a; font-size: 13px; min-height: 16px; }
-  #selection-bar {
-    position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
-    background: rgba(24,24,26,0.97); padding: 14px 16px; padding-bottom: max(14px, env(safe-area-inset-bottom));
-    display: none; align-items: center; justify-content: space-between; gap: 12px;
-    box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
-  }
-  #selection-bar.open { display: flex; }
-  #selection-count { color: #ccc; font-size: 14px; }
-  #selection-bar-buttons { display: flex; gap: 8px; }
-  #selection-cancel-btn {
-    background: rgba(255,255,255,0.1); color: #ccc; border: none; border-radius: 10px;
-    padding: 10px 16px; font-size: 14px; cursor: pointer;
-  }
-  #selection-delete-btn {
-    background: #e24b4a; color: white; border: none; border-radius: 10px;
-    padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
-  }
-  #selection-delete-btn:disabled { opacity: 0.4; }
-</style>
+    /* Library Cards */
+    .comic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-top: 15px; }
+    .comic-card { background: #2a2a2a; border-radius: 8px; padding: 12px; cursor: pointer; border: 1px solid #333; }
+    .comic-card:hover { background: #353535; }
+    .progress-bar-wrap { background: #444; height: 6px; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+    .progress-bar-fill { background: #4caf50; height: 100%; width: 0%; }
+
+    /* Reader Navbar Controls */
+    .nav-menu { position: absolute; top: 0; left: 0; right: 0; background: rgba(0,0,0,0.85); display: flex; gap: 15px; padding: 10px 20px; align-items: center; z-index: 100; }
+    .nav-menu.hidden { display: none; }
+    button { background: #333; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #555; }
+    .slider-group { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+
+    /* Reader Viewport */
+    #readerViewport { flex: 1; display: flex; justify-content: center; align-items: center; overflow: hidden; width: 100%; height: 100%; }
+    #imageContainer { display: flex; width: 100%; height: 100%; justify-content: center; align-items: center; transform-origin: center center; }
+
+    /* Page Containers & Scaling */
+    .page-wrapper { display: flex; justify-content: center; align-items: center; height: 100%; overflow: hidden; flex: 1; }
+    .page-wrapper img { max-height: 100%; max-width: 100%; object-fit: contain; }
+  </style>
 </head>
 <body>
 
-<div id="gate-overlay">
-  <h1>Enter access code</h1>
-  <input type="password" id="gate-input" inputmode="numeric" maxlength="12" autocomplete="off">
-  <button id="gate-submit">Unlock</button>
-  <div id="gate-error"></div>
-</div>
+  <!-- LIBRARY SCREEN -->
+  <div id="libraryScreen">
+    <h2>Library</h2>
+    <div class="comic-grid" id="comicGrid"></div>
+  </div>
 
-<div id="library-screen">
-  <div id="library-header">
-    <h1>Prom's Comics</h1>
-    <div style="display:flex; gap:8px; align-items:center;">
-      <button id="library-trash-btn" class="icon-btn">🗑️</button>
-      <button id="library-reload-btn" class="icon-btn">🔄</button>
-      <label id="choose-btn" class="icon-btn" for="file-input">＋</label>
-    </div>
-    <input type="file" id="file-input" accept="application/octet-stream,.cbz,.cbr,.zip,.rar" multiple>
-  </div>
-  <div id="status"></div>
-  <div id="library-empty">
-    <p>Select .cbz and .cbr files straight from your USB drive. They stay on the drive — nothing is copied to this iPad.</p>
-    <label id="choose-btn-2" for="file-input" style="background:#2b6fff;color:white;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer;">Choose Comics</label>
-  </div>
-  <div id="library-grid" style="display:none;"></div>
-  <div id="undo-toast">
-    <span id="undo-toast-text">Comic removed</span>
-    <button id="undo-toast-btn">Undo</button>
-  </div>
-</div>
-
-<div id="selection-bar">
-  <span id="selection-count">0 selected</span>
-  <div id="selection-bar-buttons">
-    <button id="selection-cancel-btn">Cancel</button>
-    <button id="selection-delete-btn" disabled>Delete</button>
-  </div>
-</div>
-
-<div id="reader-screen">
-  <div id="nav-menu-overlay">
-    <div id="nav-menu-panel">
-      <button id="menu-library-btn"><span class="icon">🏠</span> Library</button>
-      <button id="menu-spread-btn"><span class="icon">📖</span> Two-Page Spread</button>
-      <button id="menu-stretch-btn"><span class="icon">↔️</span> Fix Stretching</button>
-      <button id="menu-reload-btn"><span class="icon">🔄</span> Reload App</button>
-      <div id="stretch-panel">
-        <label>Horizontal <span id="stretch-x-value">100%</span></label>
-        <input type="range" id="stretch-x-slider" min="70" max="130" value="100">
-        <label>Vertical <span id="stretch-y-value">100%</span></label>
-        <input type="range" id="stretch-y-slider" min="70" max="130" value="100">
-        <button id="stretch-reset-btn">Reset for this comic</button>
+  <!-- READER SCREEN -->
+  <div id="readerScreen">
+    <div class="nav-menu" id="navMenu">
+      <button id="menuLibraryBtn">← Library</button>
+      <button id="prevBtn">Prev</button>
+      <button id="nextBtn">Next</button>
+      <button id="toggleModeBtn">Mode: Single</button>
+      
+      <div class="slider-group">
+        <label>Stretch X:</label>
+        <input type="range" id="scaleXInput" min="50" max="150" value="100">
+      </div>
+      <div class="slider-group">
+        <label>Stretch Y:</label>
+        <input type="range" id="scaleYInput" min="50" max="150" value="100">
       </div>
     </div>
+
+    <div id="readerViewport">
+      <div id="imageContainer"></div>
+    </div>
   </div>
-  <div id="loading-spinner">Loading page…</div>
-  <div id="page-container">
-    <img id="page-image-left" style="display:none;">
-    <img id="page-image-right" style="display:none;">
-  </div>
-  <div id="tap-left"></div>
-  <div id="tap-center"></div>
-  <div id="tap-right"></div>
-</div>
 
-<script>
-const ACCESS_CODE = '1234';
-const GATE_UNLOCK_KEY = 'usbComicReaderUnlocked';
-
-const gateOverlay = document.getElementById('gate-overlay');
-const gateInput = document.getElementById('gate-input');
-const gateSubmit = document.getElementById('gate-submit');
-const gateError = document.getElementById('gate-error');
-
-function bootApp() {
-  renderCachedLibrary();
-}
-
-function unlockGate() {
-  gateOverlay.style.display = 'none';
-  localStorage.setItem(GATE_UNLOCK_KEY, 'true');
-  bootApp();
-}
-
-function checkGateCode() {
-  if (gateInput.value === ACCESS_CODE) {
-    unlockGate();
-  } else {
-    gateError.textContent = 'Wrong code, try again.';
-    gateInput.value = '';
-  }
-}
-
-gateSubmit.addEventListener('click', checkGateCode);
-gateInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') checkGateCode();
-});
-
-if (localStorage.getItem(GATE_UNLOCK_KEY) === 'true') {
-  gateOverlay.style.display = 'none';
-  bootApp();
-} else {
-  gateInput.focus();
-}
-
-const PROGRESS_KEY = 'usbComicReaderProgress';
-const SPREAD_MODE_KEY = 'usbComicReaderSpreadMode';
-const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp)$/i;
-
-function isValidImageFile(filePath) {
-  if (!filePath) return false;
-  const fileName = filePath.split('/').pop();
-  return !fileName.startsWith('._') && !filePath.includes('__MACOSX') && IMAGE_EXT.test(fileName);
-}
-
-function parseComicTitle(rawTitle) {
-  const cleaned = rawTitle.replace(/[._]+/g, ' ').trim();
-  const wordMatch = cleaned.match(/^[A-Za-z][A-Za-z''-]*/);
-  const word = wordMatch ? wordMatch[0] : (cleaned.split(' ')[0] || cleaned);
-
-  const yearMatch = cleaned.match(/\b(19|20)\d{2}\b/);
-  const year = yearMatch ? yearMatch[0] : null;
-
-  let issue = null;
-  const numberMatches = cleaned.match(/\d+/g) || [];
-  for (const num of numberMatches) {
-    if (num !== year) { issue = num; break; }
-  }
-
-  const parts = [word];
-  if (issue) parts.push(issue);
-  if (year) parts.push(`(${year})`);
-  return parts.join(' ').trim() || cleaned;
-}
-
-function loadProgress() {
-  try { return JSON.parse(localStorage.getItem(PROGRESS_KEY)) || {}; } catch { return {}; }
-}
-function saveProgress(map) { localStorage.setItem(PROGRESS_KEY, JSON.stringify(map)); }
-function comicKey(file) { return `${file.name}_${file.size}`; }
-
-function loadSpreadMode() { return localStorage.getItem(SPREAD_MODE_KEY) === 'true'; }
-function saveSpreadMode(val) { localStorage.setItem(SPREAD_MODE_KEY, val ? 'true' : 'false'); }
-
-let dbPromise = null;
-function getDB() {
-  if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open('usbComicReaderDB', 1);
-      req.onupgradeneeded = () => {
-        req.result.createObjectStore('covers', { keyPath: 'key' });
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-  }
-  return dbPromise;
-}
-
-async function saveCoverToCache(key, title, blob, pageCount) {
-  const db = await getDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('covers', 'readwrite');
-    tx.objectStore('covers').put({ key, title, blob, pageCount });
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function getAllCachedCovers() {
-  const db = await getDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('covers', 'readonly');
-    const req = tx.objectStore('covers').getAll();
-    req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-let libraryFiles = [];
-let cardsByKey = {};
-let pendingOpenKey = null;
-
-const fileInput = document.getElementById('file-input');
-const statusEl = document.getElementById('status');
-const libraryEmpty = document.getElementById('library-empty');
-const libraryGrid = document.getElementById('library-grid');
-const undoToast = document.getElementById('undo-toast');
-document.getElementById('undo-toast-btn').addEventListener('click', undoDelete);
-
-document.getElementById('library-reload-btn').addEventListener('click', () => location.reload());
-
-/* ---- Selection mode (delete flow) ---- */
-const libraryTrashBtn = document.getElementById('library-trash-btn');
-const selectionBar = document.getElementById('selection-bar');
-const selectionCount = document.getElementById('selection-count');
-const selectionCancelBtn = document.getElementById('selection-cancel-btn');
-const selectionDeleteBtn = document.getElementById('selection-delete-btn');
-
-let selectionMode = false;
-let selectedKeys = new Set();
-
-function enterSelectionMode() {
-  selectionMode = true;
-  selectedKeys.clear();
-  libraryGrid.classList.add('selecting');
-  selectionBar.classList.add('open');
-  updateSelectionBar();
-}
-
-function exitSelectionMode() {
-  selectionMode = false;
-  selectedKeys.clear();
-  libraryGrid.classList.remove('selecting');
-  selectionBar.classList.remove('open');
-  Object.values(cardsByKey).forEach(card => card.classList.remove('selected'));
-}
-
-function updateSelectionBar() {
-  selectionCount.textContent = `${selectedKeys.size} selected`;
-  selectionDeleteBtn.disabled = selectedKeys.size === 0;
-}
-
-function toggleCardSelection(key, card) {
-  if (selectedKeys.has(key)) {
-    selectedKeys.delete(key);
-    card.classList.remove('selected');
-  } else {
-    selectedKeys.add(key);
-    card.classList.add('selected');
-  }
-  updateSelectionBar();
-}
-
-libraryTrashBtn.addEventListener('click', () => {
-  if (selectionMode) {
-    exitSelectionMode();
-  } else {
-    enterSelectionMode();
-  }
-});
-
-selectionCancelBtn.addEventListener('click', exitSelectionMode);
-
-selectionDeleteBtn.addEventListener('click', async () => {
-  const keysToDelete = [...selectedKeys];
-  exitSelectionMode();
-  await deleteComics(keysToDelete);
-});
-
-function onCardClick(key, card) {
-  if (selectionMode) {
-    toggleCardSelection(key, card);
-  } else {
-    handleCardTap(key);
-  }
-}
-
-async function renderCachedLibrary() {
-  let cached;
-  try {
-    cached = await getAllCachedCovers();
-  } catch (err) {
-    console.error('Could not read cover cache', err);
-    return;
-  }
-  if (cached.length === 0) return;
-
-  libraryEmpty.style.display = 'none';
-  libraryGrid.style.display = 'grid';
-
-  const progress = loadProgress();
-
-  cached.forEach((entry) => {
-    const card = buildCard(parseComicTitle(entry.title), entry.key);
-    const cover = card.querySelector('.comic-cover');
-    cover.innerHTML = '';
-    const img = document.createElement('img');
-    const url = URL.createObjectURL(entry.blob);
-    img.src = url;
-    img.onload = () => URL.revokeObjectURL(url);
-    cover.appendChild(img);
-    cover.classList.add('needs-reselect');
-
-    const badge = document.createElement('div');
-    badge.className = 'reselect-badge';
-    badge.textContent = 'Tap to open';
-    cover.appendChild(badge);
-
-    addProgressBar(card, entry.key, entry.pageCount, progress);
-
-    card.addEventListener('click', () => onCardClick(entry.key, card));
-    libraryGrid.appendChild(card);
-    cardsByKey[entry.key] = card;
-  });
-}
-
-function buildCard(title, key) {
-  const card = document.createElement('div');
-  card.className = 'comic-card';
-  card.dataset.key = key;
-
-  const cover = document.createElement('div');
-  cover.className = 'comic-cover';
-  const dot = document.createElement('div');
-  dot.className = 'spinner-dot';
-  cover.appendChild(dot);
-
-  const checkmark = document.createElement('div');
-  checkmark.className = 'selection-checkmark';
-  checkmark.textContent = '✓';
-  cover.appendChild(checkmark);
-
-  const titleEl = document.createElement('div');
-  titleEl.className = 'comic-title';
-  titleEl.textContent = title;
-
-  const track = document.createElement('div');
-  track.className = 'progress-track';
-  track.style.display = 'none';
-  const trackFill = document.createElement('div');
-  trackFill.className = 'progress-track-fill';
-  trackFill.style.width = '0%';
-  track.appendChild(trackFill);
-
-  card.appendChild(cover);
-  card.appendChild(titleEl);
-  card.appendChild(track);
-
-  return card;
-}
-
-function addProgressBar(card, key, pageCount, progress) {
-  const track = card.querySelector('.progress-track');
-  if (!track) return;
-  if (progress[key] === undefined || !pageCount || pageCount <= 1) {
-    track.style.display = 'none';
-    return;
-  }
-  const pct = Math.round(((progress[key] + 1) / pageCount) * 100);
-  track.querySelector('.progress-track-fill').style.width = pct + '%';
-  track.style.display = 'block';
-}
-
-let lastDeleted = null;
-let undoTimer = null;
-
-async function collectDeletionRecord(key) {
-  const card = cardsByKey[key];
-  if (!card) return null;
-
-  let coverEntry = null;
-  try {
-    const all = await getAllCachedCovers();
-    coverEntry = all.find(c => c.key === key) || null;
-  } catch (err) { /* ignore */ }
-
-  const progress = loadProgress();
-  const progressValue = progress[key];
-  const liveFileIndex = libraryFiles.findIndex(f => comicKey(f) === key);
-  const liveFile = liveFileIndex !== -1 ? libraryFiles[liveFileIndex] : null;
-
-  const record = { key, coverEntry, progressValue, liveFile };
-
-  card.remove();
-  delete cardsByKey[key];
-  if (liveFileIndex !== -1) libraryFiles.splice(liveFileIndex, 1);
-  if (progressValue !== undefined) {
-    delete progress[key];
-    saveProgress(progress);
-  }
-  try {
-    const db = await getDB();
-    const tx = db.transaction('covers', 'readwrite');
-    tx.objectStore('covers').delete(key);
-  } catch (err) { console.error('Could not remove cached cover', err); }
-
-  return record;
-}
-
-async function deleteComics(keys) {
-  const records = [];
-  for (const key of keys) {
-    const record = await collectDeletionRecord(key);
-    if (record) records.push(record);
-  }
-  if (records.length === 0) return;
-
-  lastDeleted = records;
-
-  if (libraryGrid.children.length === 0) {
-    libraryGrid.style.display = 'none';
-    libraryEmpty.style.display = 'flex';
-  }
-
-  showUndoToast(records.length);
-}
-
-function showUndoToast(count) {
-  document.getElementById('undo-toast-text').textContent =
-    count > 1 ? `${count} comics removed` : 'Comic removed';
-  clearTimeout(undoTimer);
-  undoToast.classList.add('visible');
-  undoTimer = setTimeout(() => {
-    undoToast.classList.remove('visible');
-    lastDeleted = null;
-  }, 6000);
-}
-
-async function restoreComic(record) {
-  const { key, coverEntry, progressValue, liveFile } = record;
-
-  if (liveFile) libraryFiles.push(liveFile);
-  if (progressValue !== undefined) {
-    const progress = loadProgress();
-    progress[key] = progressValue;
-    saveProgress(progress);
-  }
-
-  if (!coverEntry) return;
-
-  try {
-    await saveCoverToCache(coverEntry.key, coverEntry.title, coverEntry.blob, coverEntry.pageCount);
-  } catch (err) { console.error('Could not restore cached cover', err); }
-
-  libraryEmpty.style.display = 'none';
-  libraryGrid.style.display = 'grid';
-
-  const card = buildCard(parseComicTitle(coverEntry.title), key);
-  const cover = card.querySelector('.comic-cover');
-  cover.innerHTML = '';
-  const img = document.createElement('img');
-  const url = URL.createObjectURL(coverEntry.blob);
-  img.src = url;
-  img.onload = () => URL.revokeObjectURL(url);
-  cover.appendChild(img);
-  if (!liveFile) {
-    cover.classList.add('needs-reselect');
-    const badge = document.createElement('div');
-    badge.className = 'reselect-badge';
-    badge.textContent = 'Tap to open';
-    cover.appendChild(badge);
-  }
-  const progress = loadProgress();
-  addProgressBar(card, key, coverEntry.pageCount, progress);
-
-  card.addEventListener('click', () => onCardClick(key, card));
-  libraryGrid.appendChild(card);
-  cardsByKey[key] = card;
-}
-
-async function undoDelete() {
-  if (!lastDeleted) return;
-  const records = lastDeleted;
-
-  clearTimeout(undoTimer);
-  undoToast.classList.remove('visible');
-  lastDeleted = null;
-
-  for (const record of records) {
-    await restoreComic(record);
-  }
-}
-
-function handleCardTap(key) {
-  const liveFile = libraryFiles.find(f => comicKey(f) === key);
-  if (liveFile) {
-    openComic(liveFile);
-  } else {
-    pendingOpenKey = key;
-    statusEl.textContent = 'Select your comics again to continue reading…';
-    fileInput.click();
-  }
-}
-
-fileInput.addEventListener('change', async (e) => {
-  try {
-    const newFiles = Array.from(e.target.files);
-    if (newFiles.length === 0) return;
-
-    const existingKeys = new Set(libraryFiles.map(f => comicKey(f)));
-    const filesToAdd = newFiles.filter(f => !existingKeys.has(comicKey(f)));
-
-    libraryFiles = libraryFiles.concat(filesToAdd);
-    libraryEmpty.style.display = 'none';
-    libraryGrid.style.display = 'grid';
-
-    const cardsToLoad = [];
-    filesToAdd.forEach((file) => {
-      const key = comicKey(file);
-      let card = cardsByKey[key];
-
-      if (!card) {
-        card = buildCard(parseComicTitle(file.name.replace(/\.(cbz|cbr|zip|rar)$/i, '')), key);
-        card.addEventListener('click', () => onCardClick(key, card));
-        libraryGrid.appendChild(card);
-        cardsByKey[key] = card;
-      }
-
-      const cover = card.querySelector('.comic-cover');
-      cover.classList.remove('needs-reselect');
-      const badge = cover.querySelector('.reselect-badge');
-      if (badge) badge.remove();
-
-      cardsToLoad.push({ file, card, cover, key });
-    });
-
-    if (cardsToLoad.length > 1) {
-      statusEl.textContent = `Loading covers… 0 / ${cardsToLoad.length}`;
+  <script>
+    // --- MOCK DATABASE ---
+    const MOCK_FILES = [
+      { name: "Comic_Alpha.cbz", size: 102400, pageCount: 12 },
+      { name: "Comic_Beta.cbz", size: 204800, pageCount: 8 }
+    ];
+
+    // --- APPLICATION STATE ---
+    let currentFile = null;
+    let currentArchive = null;
+    let currentPageIndex = 0;
+    let isTwoPageMode = false;
+
+    let objectURLsInUse = [];
+    let preloadedBlobs = {}; // Holds blob URLs indexed by page number
+    let cardsByKey = {};
+
+    // --- DOM REFERENCES ---
+    const libraryScreen = document.getElementById('libraryScreen');
+    const readerScreen = document.getElementById('readerScreen');
+    const comicGrid = document.getElementById('comicGrid');
+    const navMenu = document.getElementById('navMenu');
+    const menuLibraryBtn = document.getElementById('menuLibraryBtn');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const toggleModeBtn = document.getElementById('toggleModeBtn');
+    const scaleXInput = document.getElementById('scaleXInput');
+    const scaleYInput = document.getElementById('scaleYInput');
+    const imageContainer = document.getElementById('imageContainer');
+
+    // --- UTILITIES ---
+    function comicKey(file) {
+      return `${file.name}_${file.size}`;
     }
 
-    for (let i = 0; i < cardsToLoad.length; i++) {
-      const { file, card, cover, key } = cardsToLoad[i];
-      try {
-        await loadCoverThumbnail(file, card, cover, key);
-      } catch (err) {
-        console.error('Failed to load cover for', file.name, err);
-      }
-      if (cardsToLoad.length > 1) {
-        statusEl.textContent = `Loading covers… ${i + 1} / ${cardsToLoad.length}`;
-      }
+    function loadProgress() {
+      if (!currentFile) return 0;
+      return parseInt(localStorage.getItem(`progress_${comicKey(currentFile)}`) || '0', 10);
     }
 
-    if (pendingOpenKey) {
-      const match = libraryFiles.find(f => comicKey(f) === pendingOpenKey);
-      if (match) {
-        pendingOpenKey = null;
-        statusEl.textContent = '';
-        openComic(match);
-        return;
-      }
+    function saveProgress(pageIndex) {
+      if (!currentFile) return;
+      localStorage.setItem(`progress_${comicKey(currentFile)}`, pageIndex.toString());
     }
-    statusEl.textContent = '';
-  } catch (err) {
-    console.error('File selection failed:', err);
-    statusEl.textContent = 'Something went wrong loading those files: ' + err.message;
-  } finally {
-    e.target.value = '';
-  }
-});
 
-async function loadCoverThumbnail(file, card, coverEl, key) {
-  try {
-    const opened = await openArchive(file);
-    if (opened.pageNames.length === 0) return;
-
-    const blob = await getPageBlobFromArchive(opened, opened.pageNames[0]);
-    const url = URL.createObjectURL(blob);
-    const img = document.createElement('img');
-    img.src = url;
-    img.onload = () => URL.revokeObjectURL(url);
-    coverEl.innerHTML = '';
-    coverEl.appendChild(img);
-
-    const currentProgress = loadProgress();
-    addProgressBar(card, key, opened.pageNames.length, currentProgress);
-
-    file.__cachedArchive = opened;
-
-    saveCoverToCache(key, file.name.replace(/\.(cbz|cbr|zip|rar)$/i, ''), blob, opened.pageNames.length)
-      .catch(err => console.error('Could not cache cover', err));
-  } catch (err) {
-    console.error('Cover failed for', file.name, err);
-    coverEl.innerHTML = '<span style="font-size:11px;color:#666;padding:6px;text-align:center;">Couldn\'t read</span>';
-  }
-}
-
-let unrarModulePromise = null;
-function loadUnrarModule() {
-  if (!unrarModulePromise) {
-    unrarModulePromise = import('https://cdn.jsdelivr.net/npm/node-unrar-js@2.0.2/+esm');
-  }
-  return unrarModulePromise;
-}
-
-async function openArchive(file) {
-  if (file.__cachedArchive) return file.__cachedArchive;
-
-  const lowerName = file.name.toLowerCase();
-  const isRar = lowerName.endsWith('.cbr') || lowerName.endsWith('.rar');
-
-  let result;
-  if (isRar) {
-    result = await openRar(file);
-  } else {
-    try {
-      result = await openZip(file);
-    } catch {
-      result = await openRar(file);
+    // Generator mimicking an image fetch/unpack returning SVG Data URIs with page numbers
+    function fetchMockPageBlob(pageIndex) {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1200" viewBox="0 0 800 1200">
+        <rect width="100%" height="100%" fill="${currentFile.name.includes('Alpha') ? '#2b4c7e' : '#7e2b4c'}"/>
+        <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#fff" font-size="48">
+          ${currentFile.name} - Page ${pageIndex + 1}
+        </text>
+      </svg>`;
+      const blob = new Blob([svg], { type: 'image/svg+xml' });
+      return URL.createObjectURL(blob);
     }
-  }
-  return result;
-}
 
-async function openZip(file) {
-  const zip = await JSZip.loadAsync(file);
-  const pageNames = Object.values(zip.files)
-    .filter(f => !f.dir && isValidImageFile(f.name))
-    .map(f => f.name)
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return { type: 'zip', zip, pageNames };
-}
-
-let wasmBinaryPromise = null;
-function loadWasmBinary() {
-  if (!wasmBinaryPromise) {
-    wasmBinaryPromise = fetch('https://cdn.jsdelivr.net/npm/node-unrar-js@2.0.2/esm/js/unrar.wasm')
-      .then(resp => resp.arrayBuffer());
-  }
-  return wasmBinaryPromise;
-}
-
-async function openRar(file) {
-  const unrarModule = await loadUnrarModule();
-  const wasmBinary = await loadWasmBinary();
-  const buf = await file.arrayBuffer();
-  const rarExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
-  const list = rarExtractor.getFileList();
-  const headers = [...list.fileHeaders];
-  const pageNames = headers
-    .filter(h => !h.flags.directory && isValidImageFile(h.name))
-    .map(h => h.name)
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return { type: 'rar', rarExtractor, rarQueue: Promise.resolve(), pageNames };
-}
-
-function getPageBlobFromArchive(archive, name) {
-  if (archive.type === 'zip') {
-    return archive.zip.files[name].async('blob');
-  } else {
-    const run = () => {
-      const extracted = archive.rarExtractor.extract({ files: [name] });
-      const files = [...extracted.files];
-      if (!files[0] || !files[0].extraction) {
-        throw new Error(`Could not read page "${name}" from this .cbr.`);
-      }
-      const data = files[0].extraction;
-      const ext = name.split('.').pop().toLowerCase();
-      const mime = ext === 'png' ? 'image/png'
-        : ext === 'gif' ? 'image/gif'
-        : ext === 'webp' ? 'image/webp'
-        : 'image/jpeg';
-      return new Blob([data], { type: mime });
-    };
-    const result = archive.rarQueue.then(run);
-    archive.rarQueue = result.catch(() => {});
-    return result;
-  }
-}
-
-const libraryScreen = document.getElementById('library-screen');
-const readerScreen = document.getElementById('reader-screen');
-const pageContainer = document.getElementById('page-container');
-const pageImageLeft = document.getElementById('page-image-left');
-const pageImageRight = document.getElementById('page-image-right');
-const loadingSpinner = document.getElementById('loading-spinner');
-const navMenuOverlay = document.getElementById('nav-menu-overlay');
-const navMenuPanel = document.getElementById('nav-menu-panel');
-const menuLibraryBtn = document.getElementById('menu-library-btn');
-const menuSpreadBtn = document.getElementById('menu-spread-btn');
-const menuStretchBtn = document.getElementById('menu-stretch-btn');
-const menuReloadBtn = document.getElementById('menu-reload-btn');
-const stretchPanel = document.getElementById('stretch-panel');
-const stretchXSlider = document.getElementById('stretch-x-slider');
-const stretchYSlider = document.getElementById('stretch-y-slider');
-const stretchXValue = document.getElementById('stretch-x-value');
-const stretchYValue = document.getElementById('stretch-y-value');
-const stretchResetBtn = document.getElementById('stretch-reset-btn');
-
-function openNavMenu() {
-  navMenuOverlay.classList.add('open');
-}
-function closeNavMenu() {
-  navMenuOverlay.classList.remove('open');
-  stretchPanel.classList.remove('open');
-}
-
-navMenuOverlay.addEventListener('click', (e) => {
-  if (e.target === navMenuOverlay) closeNavMenu();
-});
-
-menuLibraryBtn.addEventListener('click', () => {
-  closeNavMenu();
-  readerScreen.style.display = 'none';
-  libraryScreen.style.display = 'flex';
-  if (currentFile && cardsByKey[comicKey(currentFile)]) {
-    const card = cardsByKey[comicKey(currentFile)];
-    addProgressBar(card, comicKey(currentFile), currentArchive ? currentArchive.pageNames.length : 0, loadProgress());
-  }
-});
-
-menuSpreadBtn.addEventListener('click', () => {
-  spreadModeEnabled = !spreadModeEnabled;
-  saveSpreadMode(spreadModeEnabled);
-  updateSpreadToggleUI();
-  if (currentArchive) {
-    const currentFirstPage = spreads[currentSpreadIndex] ? spreads[currentSpreadIndex][0] : 0;
-    spreads = buildSpreads(currentArchive.pageNames.length, spreadModeEnabled);
-    currentSpreadIndex = spreadIndexForPage(currentFirstPage);
-    showSpread(currentSpreadIndex);
-  }
-});
-
-menuStretchBtn.addEventListener('click', () => {
-  stretchPanel.classList.toggle('open');
-});
-
-menuReloadBtn.addEventListener('click', () => {
-  location.reload();
-});
-
-stretchXSlider.addEventListener('input', (e) => {
-  stretchXValue.textContent = `${e.target.value}%`;
-  applyStretchTransform();
-});
-
-stretchYSlider.addEventListener('input', (e) => {
-  stretchYValue.textContent = `${e.target.value}%`;
-  applyStretchTransform();
-});
-
-stretchResetBtn.addEventListener('click', () => {
-  stretchXSlider.value = 100;
-  stretchYSlider.value = 100;
-  stretchXValue.textContent = '100%';
-  stretchYValue.textContent = '100%';
-  applyStretchTransform();
-});
-
-function applyStretchTransform() {
-  const scaleX = stretchXSlider.value / 100;
-  const scaleY = stretchYSlider.value / 100;
-  const transformStr = `scale(${scaleX}, ${scaleY})`;
-  pageImageLeft.style.transform = transformStr;
-  pageImageRight.style.transform = transformStr;
-}
-
-let currentArchive = null;
-let currentFile = null;
-let spreads = [];
-let currentSpreadIndex = 0;
-let spreadModeEnabled = loadSpreadMode();
-let openRequestId = 0;
-let objectURLsInUse = [];
-let preloadedBlobs = {};
-
-function updateSpreadToggleUI() {
-  menuSpreadBtn.classList.toggle('active', spreadModeEnabled);
-  readerScreen.classList.toggle('spread-mode', spreadModeEnabled);
-}
-updateSpreadToggleUI();
-
-function buildSpreads(pageCount, enabled) {
-  const result = [];
-  if (pageCount === 0) return result;
-  if (!enabled) {
-    for (let i = 0; i < pageCount; i++) result.push([i]);
-    return result;
-  }
-  result.push([0]);
-  for (let i = 1; i < pageCount; i += 2) {
-    if (i + 1 < pageCount) result.push([i, i + 1]);
-    else result.push([i]);
-  }
-  return result;
-}
-
-function spreadIndexForPage(pageNum) {
-  for (let i = 0; i < spreads.length; i++) {
-    if (spreads[i].includes(pageNum)) return i;
-  }
-  return 0;
-}
-
-async function openComic(file) {
-  const myRequestId = ++openRequestId;
-  statusEl.textContent = 'Opening ' + file.name + '…';
-  try {
-    const archive = await openArchive(file);
-    if (myRequestId !== openRequestId) return;
-
-    currentArchive = archive;
-    currentFile = file;
-    spreads = buildSpreads(archive.pageNames.length, spreadModeEnabled);
-
-    const progress = loadProgress();
-    const savedPage = progress[comicKey(file)] || 0;
-    currentSpreadIndex = spreadIndexForPage(Math.min(savedPage, archive.pageNames.length - 1));
-
-    libraryScreen.style.display = 'none';
-    readerScreen.style.display = 'flex';
-    statusEl.textContent = '';
-    await showSpread(currentSpreadIndex);
-  } catch (err) {
-    if (myRequestId !== openRequestId) return;
-    console.error(err);
-    statusEl.textContent = 'Could not open ' + file.name + ': ' + err.message;
-  }
-}
-
-async function preloadNextSpread(spreadIdx) {
-  const nextIdx = spreadIdx + 1;
-  if (nextIdx >= spreads.length || !currentArchive) return;
-  const pageIndices = spreads[nextIdx];
-  const myArchive = currentArchive;
-  for (const i of pageIndices) {
-    if (!preloadedBlobs[i]) {
-      try {
-        preloadedBlobs[i] = await getPageBlobFromArchive(myArchive, myArchive.pageNames[i]);
-      } catch (err) {
-        console.warn('Preload failed for page', i, err);
-      }
+    // --- CACHE & OBJECT URL CLEANUP ---
+    function cleanupObjectURLs() {
+      objectURLsInUse.forEach(url => URL.revokeObjectURL(url));
+      objectURLsInUse = [];
     }
-  }
-}
 
-async function showSpread(index) {
-  if (!currentArchive || index < 0 || index >= spreads.length) return;
+    function purgePreloadCache() {
+      // Revoke and clear any pending preloaded blobs
+      Object.values(preloadedBlobs).forEach(url => URL.revokeObjectURL(url));
+      preloadedBlobs = {};
+    }
 
-  loadingSpinner.classList.add('visible');
+    // --- PRELOAD ENGINE ---
+    function prefetchPages(centerIndex) {
+      const pagesToLoad = [centerIndex + 1, centerIndex + 2];
+      
+      pagesToLoad.forEach(idx => {
+        if (idx < currentArchive.pageCount && !preloadedBlobs[idx]) {
+          preloadedBlobs[idx] = fetchMockPageBlob(idx);
+        }
+      });
+    }
 
-  objectURLsInUse.forEach(url => URL.revokeObjectURL(url));
-  objectURLsInUse = [];
-
-  const pageIndices = spreads[index];
-  const isDual = pageIndices.length === 2;
-
-  try {
-    const getBlob = async (pageIdx) => {
-      if (preloadedBlobs[pageIdx]) {
-        const b = preloadedBlobs[pageIdx];
-        delete preloadedBlobs[pageIdx];
-        return b;
+    function getPageURL(pageIndex) {
+      if (preloadedBlobs[pageIndex]) {
+        const url = preloadedBlobs[pageIndex];
+        delete preloadedBlobs[pageIndex]; // Consume from cache
+        objectURLsInUse.push(url);
+        return url;
       }
-      return await getPageBlobFromArchive(currentArchive, currentArchive.pageNames[pageIdx]);
-    };
-
-    if (isDual) {
-      const [blobLeft, blobRight] = await Promise.all([
-        getBlob(pageIndices[0]),
-        getBlob(pageIndices[1])
-      ]);
-
-      const urlLeft = URL.createObjectURL(blobLeft);
-      const urlRight = URL.createObjectURL(blobRight);
-      objectURLsInUse.push(urlLeft, urlRight);
-
-      pageImageLeft.src = urlLeft;
-      pageImageRight.src = urlRight;
-      pageImageLeft.style.display = 'block';
-      pageImageRight.style.display = 'block';
-    } else {
-      const blob = await getBlob(pageIndices[0]);
-      const url = URL.createObjectURL(blob);
+      const url = fetchMockPageBlob(pageIndex);
       objectURLsInUse.push(url);
-
-      pageImageLeft.src = url;
-      pageImageLeft.style.display = 'block';
-      pageImageRight.style.display = 'none';
+      return url;
     }
 
-    const progress = loadProgress();
-    progress[comicKey(currentFile)] = pageIndices[0];
-    saveProgress(progress);
+    // --- STRETCH SETTINGS PERSISTENCE ---
+    function loadComicSettings(file) {
+      if (!file) return;
+      const key = comicKey(file);
+      const savedSettings = JSON.parse(localStorage.getItem(`stretch_${key}`) || '{}');
 
-    preloadNextSpread(index);
-  } catch (err) {
-    console.error('Failed to display spread:', err);
-  } finally {
-    loadingSpinner.classList.remove('visible');
-  }
-}
+      const scaleX = savedSettings.scaleX !== undefined ? savedSettings.scaleX : 100;
+      const scaleY = savedSettings.scaleY !== undefined ? savedSettings.scaleY : 100;
 
-document.getElementById('tap-left').addEventListener('click', () => {
-  if (currentSpreadIndex > 0) {
-    currentSpreadIndex--;
-    showSpread(currentSpreadIndex);
-  }
-});
+      scaleXInput.value = scaleX;
+      scaleYInput.value = scaleY;
+      applyStretch(scaleX, scaleY);
+    }
 
-document.getElementById('tap-right').addEventListener('click', () => {
-  if (currentSpreadIndex < spreads.length - 1) {
-    currentSpreadIndex++;
-    showSpread(currentSpreadIndex);
-  }
-});
+    function saveComicSettings() {
+      if (!currentFile) return;
+      const key = comicKey(currentFile);
+      const settings = {
+        scaleX: scaleXInput.value,
+        scaleY: scaleYInput.value
+      };
+      localStorage.setItem(`stretch_${key}`, JSON.stringify(settings));
+    }
 
-document.getElementById('tap-center').addEventListener('click', openNavMenu);
-</script>
+    function applyStretch(scaleX, scaleY) {
+      imageContainer.style.transform = `scale(${scaleX / 100}, ${scaleY / 100})`;
+    }
+
+    scaleXInput.addEventListener('input', () => {
+      applyStretch(scaleXInput.value, scaleYInput.value);
+      saveComicSettings();
+    });
+
+    scaleYInput.addEventListener('input', () => {
+      applyStretch(scaleXInput.value, scaleYInput.value);
+      saveComicSettings();
+    });
+
+    // --- TWO-PAGE LANDSCAPE ASPECT SNAPPING ---
+    function updateLandscapeTwoPageLayout(imgLeft, imgRight) {
+      if (!imgLeft || !imgRight) return;
+
+      const adjustFlex = () => {
+        if (!imgLeft.naturalWidth || !imgRight.naturalWidth) return;
+        const aspectLeft = imgLeft.naturalWidth / imgLeft.naturalHeight;
+        const aspectRight = imgRight.naturalWidth / imgRight.naturalHeight;
+        
+        const combinedAspect = aspectLeft + aspectRight;
+        const leftWidthPercent = (aspectLeft / combinedAspect) * 100;
+        const rightWidthPercent = (aspectRight / combinedAspect) * 100;
+
+        if (imgLeft.parentElement) imgLeft.parentElement.style.flex = `0 0 ${leftWidthPercent}%`;
+        if (imgRight.parentElement) imgRight.parentElement.style.flex = `0 0 ${rightWidthPercent}%`;
+      };
+
+      if (imgLeft.complete && imgRight.complete) {
+        adjustFlex();
+      } else {
+        imgLeft.onload = adjustFlex;
+        imgRight.onload = adjustFlex;
+      }
+    }
+
+    // --- READER CORE RENDERING ---
+    function renderPages() {
+      cleanupObjectURLs();
+      imageContainer.innerHTML = '';
+
+      const createPageElement = (pageIdx) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'page-wrapper';
+        const img = document.createElement('img');
+        img.src = getPageURL(pageIdx);
+        wrap.appendChild(img);
+        return { wrap, img };
+      };
+
+      if (!isTwoPageMode || currentPageIndex >= currentArchive.pageCount - 1) {
+        // Single Page View
+        const { wrap } = createPageElement(currentPageIndex);
+        imageContainer.appendChild(wrap);
+      } else {
+        // Two Page View
+        const left = createPageElement(currentPageIndex);
+        const right = createPageElement(currentPageIndex + 1);
+
+        imageContainer.appendChild(left.wrap);
+        imageContainer.appendChild(right.wrap);
+
+        updateLandscapeTwoPageLayout(left.img, right.img);
+      }
+
+      saveProgress(currentPageIndex);
+      prefetchPages(currentPageIndex);
+    }
+
+    // --- NAVIGATION LOGIC ---
+    function openComic(file) {
+      // Flush residual state and caches from previous sessions
+      cleanupObjectURLs();
+      purgePreloadCache();
+
+      currentFile = file;
+      currentArchive = { pageCount: file.pageCount };
+      currentPageIndex = loadProgress();
+
+      loadComicSettings(currentFile);
+
+      libraryScreen.style.display = 'none';
+      readerScreen.style.display = 'flex';
+      renderPages();
+    }
+
+    menuLibraryBtn.addEventListener('click', () => {
+      // Fix: Clear preloadedBlobs and active URLs to stop cross-comic image leaks
+      cleanupObjectURLs();
+      purgePreloadCache();
+
+      readerScreen.style.display = 'none';
+      libraryScreen.style.display = 'flex';
+
+      // Update card UI progress indicators
+      if (currentFile && cardsByKey[comicKey(currentFile)]) {
+        const card = cardsByKey[comicKey(currentFile)];
+        addProgressBar(card, comicKey(currentFile), currentArchive ? currentArchive.pageCount : 0, loadProgress());
+      }
+
+      // Reset active refs
+      currentFile = null;
+      currentArchive = null;
+    });
+
+    prevBtn.addEventListener('click', () => {
+      const step = isTwoPageMode ? 2 : 1;
+      if (currentPageIndex - step >= 0) {
+        currentPageIndex -= step;
+        renderPages();
+      } else if (currentPageIndex > 0) {
+        currentPageIndex = 0;
+        renderPages();
+      }
+    });
+
+    nextBtn.addEventListener('click', () => {
+      const step = isTwoPageMode ? 2 : 1;
+      if (currentPageIndex + step < currentArchive.pageCount) {
+        currentPageIndex += step;
+        renderPages();
+      }
+    });
+
+    toggleModeBtn.addEventListener('click', () => {
+      isTwoPageMode = !isTwoPageMode;
+      toggleModeBtn.innerText = `Mode: ${isTwoPageMode ? 'Two-Page' : 'Single'}`;
+      renderPages();
+    });
+
+    // --- LIBRARY SETUP ---
+    function addProgressBar(cardEl, key, totalPages, currentPage) {
+      let wrap = cardEl.querySelector('.progress-bar-wrap');
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'progress-bar-wrap';
+        const fill = document.createElement('div');
+        fill.className = 'progress-bar-fill';
+        wrap.appendChild(fill);
+        cardEl.appendChild(wrap);
+      }
+      const fill = wrap.querySelector('.progress-bar-fill');
+      const pct = totalPages > 0 ? Math.min(100, Math.round(((currentPage + 1) / totalPages) * 100)) : 0;
+      fill.style.width = `${pct}%`;
+    }
+
+    function initLibrary() {
+      MOCK_FILES.forEach(file => {
+        const key = comicKey(file);
+        const card = document.createElement('div');
+        card.className = 'comic-card';
+        card.innerHTML = `<strong>${file.name}</strong><br><small>${file.pageCount} Pages</small>`;
+        
+        cardsByKey[key] = card;
+        
+        const savedPage = parseInt(localStorage.getItem(`progress_${key}`) || '0', 10);
+        addProgressBar(card, key, file.pageCount, savedPage);
+
+        card.addEventListener('click', () => openComic(file));
+        comicGrid.appendChild(card);
+      });
+    }
+
+    initLibrary();
+  </script>
 </body>
 </html>
