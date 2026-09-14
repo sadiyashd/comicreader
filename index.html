@@ -698,6 +698,8 @@ fileInput.addEventListener('change', async (e) => {
   } catch (err) {
     console.error('File selection failed:', err);
     statusEl.textContent = 'Something went wrong loading those files: ' + err.message;
+  } finally {
+    e.target.value = '';
   }
 });
 
