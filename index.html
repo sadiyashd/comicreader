@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Comics">
-<title>Comic Reader</title>
+<title>USB Comic Reader</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
@@ -20,9 +20,10 @@
     border-bottom: 1px solid #222;
   }
   #library-header h1 { font-size: 22px; font-weight: 700; margin: 0; }
-  #choose-btn {
-    background: #2b6fff; color: white; border: none; border-radius: 10px;
-    padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+  .icon-btn {
+    background: rgba(255,255,255,0.08); color: white; border: none; border-radius: 10px;
+    width: 40px; height: 40px; font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
   }
   #library-empty {
     flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -51,8 +52,19 @@
     font-size: 12px; color: #ccc; margin-top: 6px; line-height: 1.3;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
-  .progress-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 4px; background: rgba(0,0,0,0.5); }
-  .progress-bar-fill { height: 100%; background: #2b6fff; }
+  .progress-track { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 5px; overflow: hidden; }
+  .progress-track-fill { height: 100%; background: #2b6fff; }
+  .comic-card.pressing .comic-cover { transform: scale(0.94); transition: transform 0.15s ease; }
+  #undo-toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: #1c1c1f; color: #eee; padding: 12px 16px; border-radius: 12px;
+    display: none; align-items: center; gap: 14px; font-size: 14px; z-index: 50;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  #undo-toast.visible { display: flex; opacity: 1; transform: translateX(-50%) translateY(0); }
+  #undo-toast button {
+    background: none; border: none; color: #4d8dff; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
   #status { color: #888; font-size: 13px; text-align: center; padding: 8px 20px; min-height: 18px; }
 
   #reader-screen {
@@ -109,18 +121,39 @@
   }
   #loading-spinner.visible { opacity: 1; }
   input[type="file"] { display: none; }
+  #gate-overlay {
+    position: fixed; inset: 0; background: #0b0b0d; z-index: 100;
+    display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+  }
+  #gate-overlay h1 { color: #eee; font-size: 18px; font-weight: 600; margin: 0; }
+  #gate-input {
+    background: #1c1c1f; border: 1px solid #333; color: #fff; font-size: 18px;
+    padding: 12px 16px; border-radius: 10px; width: 200px; text-align: center; letter-spacing: 4px;
+  }
+  #gate-submit {
+    background: #2b6fff; color: white; border: none; border-radius: 10px;
+    padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  #gate-error { color: #e24b4a; font-size: 13px; min-height: 16px; }
 </style>
 </head>
 <body>
 
+<div id="gate-overlay">
+  <h1>Enter access code</h1>
+  <input type="password" id="gate-input" inputmode="numeric" maxlength="12" autocomplete="off">
+  <button id="gate-submit">Unlock</button>
+  <div id="gate-error"></div>
+</div>
+
 <div id="library-screen">
   <div id="library-header">
-    <h1>My Comics</h1>
+    <h1>Prom's Comics</h1>
     <div style="display:flex; gap:8px; align-items:center;">
-      <button id="library-reload-btn" style="background:rgba(255,255,255,0.08); color:white; border:none; border-radius:10px; padding:10px 12px; font-size:16px; cursor:pointer;">🔄</button>
-      <label id="choose-btn" for="file-input">Choose Comics</label>
+      <button id="library-reload-btn" class="icon-btn">🔄</button>
+      <label id="choose-btn" class="icon-btn" for="file-input">＋</label>
     </div>
-    <input type="file" id="file-input" accept="*/*" multiple>
+    <input type="file" id="file-input" accept="application/octet-stream,.cbz,.cbr,.zip,.rar" multiple>
   </div>
   <div id="status"></div>
   <div id="library-empty">
@@ -128,6 +161,10 @@
     <label id="choose-btn-2" for="file-input" style="background:#2b6fff;color:white;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer;">Choose Comics</label>
   </div>
   <div id="library-grid" style="display:none;"></div>
+  <div id="undo-toast">
+    <span id="undo-toast-text">Comic removed</span>
+    <button id="undo-toast-btn">Undo</button>
+  </div>
 </div>
 
 <div id="reader-screen">
@@ -157,6 +194,40 @@
 </div>
 
 <script>
+const ACCESS_CODE = '1234';
+const GATE_UNLOCK_KEY = 'usbComicReaderUnlocked';
+
+const gateOverlay = document.getElementById('gate-overlay');
+const gateInput = document.getElementById('gate-input');
+const gateSubmit = document.getElementById('gate-submit');
+const gateError = document.getElementById('gate-error');
+
+function unlockGate() {
+  gateOverlay.style.display = 'none';
+  localStorage.setItem(GATE_UNLOCK_KEY, 'true');
+  bootApp();
+}
+
+function checkGateCode() {
+  if (gateInput.value === ACCESS_CODE) {
+    unlockGate();
+  } else {
+    gateError.textContent = 'Wrong code, try again.';
+    gateInput.value = '';
+  }
+}
+
+gateSubmit.addEventListener('click', checkGateCode);
+gateInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') checkGateCode();
+});
+
+if (localStorage.getItem(GATE_UNLOCK_KEY) === 'true') {
+  gateOverlay.style.display = 'none';
+} else {
+  gateInput.focus();
+}
+
 const PROGRESS_KEY = 'usbComicReaderProgress';
 const SPREAD_MODE_KEY = 'usbComicReaderSpreadMode';
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp)$/i;
@@ -165,6 +236,26 @@ function isValidImageFile(filePath) {
   if (!filePath) return false;
   const fileName = filePath.split('/').pop();
   return !fileName.startsWith('._') && !filePath.includes('__MACOSX') && IMAGE_EXT.test(fileName);
+}
+
+function parseComicTitle(rawTitle) {
+  const cleaned = rawTitle.replace(/[._]+/g, ' ').trim();
+  const wordMatch = cleaned.match(/^[A-Za-z][A-Za-z''-]*/);
+  const word = wordMatch ? wordMatch[0] : (cleaned.split(' ')[0] || cleaned);
+
+  const yearMatch = cleaned.match(/\b(19|20)\d{2}\b/);
+  const year = yearMatch ? yearMatch[0] : null;
+
+  let issue = null;
+  const numberMatches = cleaned.match(/\d+/g) || [];
+  for (const num of numberMatches) {
+    if (num !== year) { issue = num; break; }
+  }
+
+  const parts = [word];
+  if (issue) parts.push(issue);
+  if (year) parts.push(`(${year})`);
+  return parts.join(' ').trim() || cleaned;
 }
 
 function loadProgress() {
@@ -217,6 +308,8 @@ const fileInput = document.getElementById('file-input');
 const statusEl = document.getElementById('status');
 const libraryEmpty = document.getElementById('library-empty');
 const libraryGrid = document.getElementById('library-grid');
+const undoToast = document.getElementById('undo-toast');
+document.getElementById('undo-toast-btn').addEventListener('click', undoDelete);
 
 async function renderCachedLibrary() {
   let cached;
@@ -234,7 +327,7 @@ async function renderCachedLibrary() {
   const progress = loadProgress();
 
   cached.forEach((entry) => {
-    const card = buildCard(entry.title, entry.key);
+    const card = buildCard(parseComicTitle(entry.title), entry.key);
     const cover = card.querySelector('.comic-cover');
     cover.innerHTML = '';
     const img = document.createElement('img');
@@ -249,7 +342,7 @@ async function renderCachedLibrary() {
     badge.textContent = 'Tap to open';
     cover.appendChild(badge);
 
-    addProgressBar(cover, entry.key, entry.pageCount, progress);
+    addProgressBar(card, entry.key, entry.pageCount, progress);
 
     card.addEventListener('click', () => handleCardTap(entry.key));
     libraryGrid.appendChild(card);
@@ -272,21 +365,159 @@ function buildCard(title, key) {
   titleEl.className = 'comic-title';
   titleEl.textContent = title;
 
+  const track = document.createElement('div');
+  track.className = 'progress-track';
+  track.style.display = 'none';
+  const trackFill = document.createElement('div');
+  trackFill.className = 'progress-track-fill';
+  trackFill.style.width = '0%';
+  track.appendChild(trackFill);
+
   card.appendChild(cover);
   card.appendChild(titleEl);
+  card.appendChild(track);
+
+  attachLongPressToDelete(card, key);
+
   return card;
 }
 
-function addProgressBar(coverEl, key, pageCount, progress) {
-  if (progress[key] === undefined || !pageCount || pageCount <= 1) return;
+function addProgressBar(card, key, pageCount, progress) {
+  const track = card.querySelector('.progress-track');
+  if (!track) return;
+  if (progress[key] === undefined || !pageCount || pageCount <= 1) {
+    track.style.display = 'none';
+    return;
+  }
   const pct = Math.round(((progress[key] + 1) / pageCount) * 100);
-  const bar = document.createElement('div');
-  bar.className = 'progress-bar';
-  const fill = document.createElement('div');
-  fill.className = 'progress-bar-fill';
-  fill.style.width = pct + '%';
-  bar.appendChild(fill);
-  coverEl.appendChild(bar);
+  track.querySelector('.progress-track-fill').style.width = pct + '%';
+  track.style.display = 'block';
+}
+
+let lastDeleted = null;
+let undoTimer = null;
+
+function attachLongPressToDelete(card, key) {
+  let pressTimer = null;
+  let moved = false;
+
+  const start = (e) => {
+    moved = false;
+    card.classList.add('pressing');
+    pressTimer = setTimeout(() => {
+      if (!moved) {
+        card.classList.remove('pressing');
+        deleteComic(key);
+      }
+    }, 600);
+  };
+  const cancel = () => {
+    clearTimeout(pressTimer);
+    card.classList.remove('pressing');
+  };
+  const move = () => { moved = true; cancel(); };
+
+  card.addEventListener('touchstart', start, { passive: true });
+  card.addEventListener('touchend', cancel);
+  card.addEventListener('touchcancel', cancel);
+  card.addEventListener('touchmove', move);
+  card.addEventListener('mousedown', start);
+  card.addEventListener('mouseup', cancel);
+  card.addEventListener('mouseleave', cancel);
+}
+
+async function deleteComic(key) {
+  const card = cardsByKey[key];
+  if (!card) return;
+
+  let coverEntry = null;
+  try {
+    const all = await getAllCachedCovers();
+    coverEntry = all.find(c => c.key === key) || null;
+  } catch (err) { /* ignore */ }
+
+  const progress = loadProgress();
+  const progressValue = progress[key];
+  const liveFileIndex = libraryFiles.findIndex(f => comicKey(f) === key);
+  const liveFile = liveFileIndex !== -1 ? libraryFiles[liveFileIndex] : null;
+
+  lastDeleted = { key, coverEntry, progressValue, liveFile };
+
+  card.remove();
+  delete cardsByKey[key];
+  if (liveFileIndex !== -1) libraryFiles.splice(liveFileIndex, 1);
+  if (progressValue !== undefined) {
+    delete progress[key];
+    saveProgress(progress);
+  }
+  try {
+    const db = await getDB();
+    const tx = db.transaction('covers', 'readwrite');
+    tx.objectStore('covers').delete(key);
+  } catch (err) { console.error('Could not remove cached cover', err); }
+
+  if (libraryGrid.children.length === 0) {
+    libraryGrid.style.display = 'none';
+    libraryEmpty.style.display = 'flex';
+  }
+
+  showUndoToast();
+}
+
+function showUndoToast() {
+  clearTimeout(undoTimer);
+  undoToast.classList.add('visible');
+  undoTimer = setTimeout(() => {
+    undoToast.classList.remove('visible');
+    lastDeleted = null;
+  }, 6000);
+}
+
+async function undoDelete() {
+  if (!lastDeleted) return;
+  const { key, coverEntry, progressValue, liveFile } = lastDeleted;
+
+  clearTimeout(undoTimer);
+  undoToast.classList.remove('visible');
+  lastDeleted = null;
+
+  if (liveFile) libraryFiles.push(liveFile);
+  if (progressValue !== undefined) {
+    const progress = loadProgress();
+    progress[key] = progressValue;
+    saveProgress(progress);
+  }
+
+  if (coverEntry) {
+    try {
+      await saveCoverToCache(coverEntry.key, coverEntry.title, coverEntry.blob, coverEntry.pageCount);
+    } catch (err) { console.error('Could not restore cached cover', err); }
+
+    libraryEmpty.style.display = 'none';
+    libraryGrid.style.display = 'grid';
+
+    const card = buildCard(parseComicTitle(coverEntry.title), key);
+    const cover = card.querySelector('.comic-cover');
+    cover.innerHTML = '';
+    const img = document.createElement('img');
+    const url = URL.createObjectURL(coverEntry.blob);
+    img.src = url;
+    img.onload = () => URL.revokeObjectURL(url);
+    cover.appendChild(img);
+    if (!liveFile) {
+      cover.classList.add('needs-reselect');
+      const badge = document.createElement('div');
+      badge.className = 'reselect-badge';
+      badge.textContent = 'Tap to open';
+      cover.appendChild(badge);
+    }
+    const progress = loadProgress();
+    addProgressBar(card, key, coverEntry.pageCount, progress);
+
+    card.addEventListener('click', () => handleCardTap(key));
+    libraryGrid.appendChild(card);
+    cardsByKey[key] = card;
+  }
 }
 
 function handleCardTap(key) {
@@ -320,7 +551,7 @@ fileInput.addEventListener('change', async (e) => {
       let card = cardsByKey[key];
 
       if (!card) {
-        card = buildCard(file.name.replace(/\.(cbz|cbr|zip|rar)$/i, ''), key);
+        card = buildCard(parseComicTitle(file.name.replace(/\.(cbz|cbr|zip|rar)$/i, '')), key);
         card.addEventListener('click', () => handleCardTap(key));
         libraryGrid.appendChild(card);
         cardsByKey[key] = card;
@@ -331,16 +562,16 @@ fileInput.addEventListener('change', async (e) => {
       const badge = cover.querySelector('.reselect-badge');
       if (badge) badge.remove();
 
-      cardsToLoad.push({ file, cover, key });
+      cardsToLoad.push({ file, card, cover, key });
     });
 
     if (cardsToLoad.length > 1) {
       statusEl.textContent = `Loading covers… 0 / ${cardsToLoad.length}`;
     }
     for (let i = 0; i < cardsToLoad.length; i++) {
-      const { file, cover, key } = cardsToLoad[i];
+      const { file, card, cover, key } = cardsToLoad[i];
       try {
-        await loadCoverThumbnail(file, cover, progress, key);
+        await loadCoverThumbnail(file, card, cover, progress, key);
       } catch (err) {
         console.error('Failed to load cover for', file.name, err);
       }
@@ -365,7 +596,7 @@ fileInput.addEventListener('change', async (e) => {
   }
 });
 
-async function loadCoverThumbnail(file, coverEl, progress, key) {
+async function loadCoverThumbnail(file, card, coverEl, progress, key) {
   try {
     const opened = await openArchive(file);
     if (opened.pageNames.length === 0) return;
@@ -377,7 +608,7 @@ async function loadCoverThumbnail(file, coverEl, progress, key) {
     img.onload = () => URL.revokeObjectURL(url);
     coverEl.innerHTML = '';
     coverEl.appendChild(img);
-    addProgressBar(coverEl, key, opened.pageNames.length, progress);
+    addProgressBar(card, key, opened.pageNames.length, progress);
 
     file.__cachedArchive = opened;
 
@@ -783,19 +1014,7 @@ menuLibraryBtn.addEventListener('click', () => {
   const key = comicKey(currentFile);
   const card = cardsByKey[key];
   if (card && currentArchive) {
-    const cover = card.querySelector('.comic-cover');
-    let bar = cover.querySelector('.progress-bar');
-    if (!bar) {
-      bar = document.createElement('div');
-      bar.className = 'progress-bar';
-      bar.innerHTML = '<div class="progress-bar-fill"></div>';
-      cover.appendChild(bar);
-    }
-    const total = currentArchive.pageNames.length;
-    if (progress[key] !== undefined && total > 1) {
-      const pct = Math.round(((progress[key] + 1) / total) * 100);
-      bar.querySelector('.progress-bar-fill').style.width = pct + '%';
-    }
+    addProgressBar(card, key, currentArchive.pageNames.length, progress);
   }
 });
 
@@ -820,7 +1039,13 @@ window.addEventListener('unhandledrejection', (e) => {
   if (statusEl) statusEl.textContent = 'Something went wrong: ' + (e.reason && e.reason.message ? e.reason.message : e.reason);
 });
 
-renderCachedLibrary();
+function bootApp() {
+  renderCachedLibrary();
+}
+
+if (localStorage.getItem(GATE_UNLOCK_KEY) === 'true') {
+  bootApp();
+}
 </script>
 
 </body>
