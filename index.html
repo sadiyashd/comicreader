@@ -32,11 +32,11 @@
   #library-empty p { max-width: 300px; font-size: 14px; margin: 0; }
   #library-grid {
     flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
-    display: grid; grid-template-columns: repeat(5, 1fr);
+    display: grid; grid-template-columns: repeat(4, 1fr);
     gap: 16px; padding: 16px 20px 40px;
   }
   @media (orientation: landscape) {
-    #library-grid { grid-template-columns: repeat(7, 1fr); }
+    #library-grid { grid-template-columns: repeat(6, 1fr); }
   }
   .comic-card { cursor: pointer; }
   .comic-cover {
@@ -57,7 +57,15 @@
   }
   .progress-track { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 5px; overflow: hidden; }
   .progress-track-fill { height: 100%; background: #2b6fff; }
-  .comic-card.pressing .comic-cover { transform: scale(0.94); transition: transform 0.15s ease; }
+  .comic-card.selectable .comic-cover { opacity: 0.85; }
+  .comic-card.selected .comic-cover { outline: 3px solid #2b6fff; outline-offset: 2px; }
+  .selection-checkmark {
+    display: none; position: absolute; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(0,0,0,0.6); border: 2px solid #fff; align-items: center; justify-content: center;
+    color: transparent; font-size: 13px; font-weight: 700;
+  }
+  #library-grid.selecting .selection-checkmark { display: flex; }
+  .comic-card.selected .selection-checkmark { background: #2b6fff; color: white; }
   #undo-toast {
     position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
     background: #1c1c1f; color: #eee; padding: 12px 16px; border-radius: 12px;
@@ -138,25 +146,24 @@
     padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
   }
   #gate-error { color: #e24b4a; font-size: 13px; min-height: 16px; }
-  #cover-preview-overlay {
-    display: none; position: fixed; inset: 0; z-index: 60;
-    align-items: flex-end; justify-content: center;
-  }
-  #cover-preview-overlay.open { display: flex; }
-  #cover-preview-bar {
-    width: 100%; max-width: 500px; background: rgba(24,24,26,0.97);
-    border-radius: 18px 18px 0 0; padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom));
-    display: flex; flex-direction: column; gap: 8px;
+  #selection-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
+    background: rgba(24,24,26,0.97); padding: 14px 16px; padding-bottom: max(14px, env(safe-area-inset-bottom));
+    display: none; align-items: center; justify-content: space-between; gap: 12px;
     box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
   }
-  #cover-preview-remove-btn {
-    background: #e24b4a; color: white; border: none; border-radius: 10px;
-    padding: 14px; font-size: 15px; font-weight: 600; cursor: pointer;
-  }
-  #cover-preview-cancel-btn {
+  #selection-bar.open { display: flex; }
+  #selection-count { color: #ccc; font-size: 14px; }
+  #selection-bar-buttons { display: flex; gap: 8px; }
+  #selection-cancel-btn {
     background: rgba(255,255,255,0.1); color: #ccc; border: none; border-radius: 10px;
-    padding: 12px; font-size: 14px; cursor: pointer;
+    padding: 10px 16px; font-size: 14px; cursor: pointer;
   }
+  #selection-delete-btn {
+    background: #e24b4a; color: white; border: none; border-radius: 10px;
+    padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  #selection-delete-btn:disabled { opacity: 0.4; }
 </style>
 </head>
 <body>
@@ -172,6 +179,7 @@
   <div id="library-header">
     <h1>Prom's Comics</h1>
     <div style="display:flex; gap:8px; align-items:center;">
+      <button id="library-trash-btn" class="icon-btn">🗑️</button>
       <button id="library-reload-btn" class="icon-btn">🔄</button>
       <label id="choose-btn" class="icon-btn" for="file-input">＋</label>
     </div>
@@ -189,10 +197,11 @@
   </div>
 </div>
 
-<div id="cover-preview-overlay">
-  <div id="cover-preview-bar">
-    <button id="cover-preview-remove-btn">Remove from Library</button>
-    <button id="cover-preview-cancel-btn">Cancel</button>
+<div id="selection-bar">
+  <span id="selection-count">0 selected</span>
+  <div id="selection-bar-buttons">
+    <button id="selection-cancel-btn">Cancel</button>
+    <button id="selection-delete-btn" disabled>Delete</button>
   </div>
 </div>
 
@@ -340,30 +349,71 @@ const libraryGrid = document.getElementById('library-grid');
 const undoToast = document.getElementById('undo-toast');
 document.getElementById('undo-toast-btn').addEventListener('click', undoDelete);
 
-const coverPreviewOverlay = document.getElementById('cover-preview-overlay');
-const coverPreviewRemoveBtn = document.getElementById('cover-preview-remove-btn');
-const coverPreviewCancelBtn = document.getElementById('cover-preview-cancel-btn');
-let currentPreviewKey = null;
+/* ---- Selection mode (delete flow) ---- */
+const libraryTrashBtn = document.getElementById('library-trash-btn');
+const selectionBar = document.getElementById('selection-bar');
+const selectionCount = document.getElementById('selection-count');
+const selectionCancelBtn = document.getElementById('selection-cancel-btn');
+const selectionDeleteBtn = document.getElementById('selection-delete-btn');
 
-function openCoverPreview(key) {
-  currentPreviewKey = key;
-  coverPreviewOverlay.classList.add('open');
+let selectionMode = false;
+let selectedKeys = new Set();
+
+function enterSelectionMode() {
+  selectionMode = true;
+  selectedKeys.clear();
+  libraryGrid.classList.add('selecting');
+  selectionBar.classList.add('open');
+  updateSelectionBar();
 }
 
-function closeCoverPreview() {
-  coverPreviewOverlay.classList.remove('open');
-  currentPreviewKey = null;
+function exitSelectionMode() {
+  selectionMode = false;
+  selectedKeys.clear();
+  libraryGrid.classList.remove('selecting');
+  selectionBar.classList.remove('open');
+  Object.values(cardsByKey).forEach(card => card.classList.remove('selected'));
 }
 
-coverPreviewCancelBtn.addEventListener('click', closeCoverPreview);
-coverPreviewOverlay.addEventListener('click', (e) => {
-  if (e.target === coverPreviewOverlay) closeCoverPreview();
+function updateSelectionBar() {
+  selectionCount.textContent = `${selectedKeys.size} selected`;
+  selectionDeleteBtn.disabled = selectedKeys.size === 0;
+}
+
+function toggleCardSelection(key, card) {
+  if (selectedKeys.has(key)) {
+    selectedKeys.delete(key);
+    card.classList.remove('selected');
+  } else {
+    selectedKeys.add(key);
+    card.classList.add('selected');
+  }
+  updateSelectionBar();
+}
+
+libraryTrashBtn.addEventListener('click', () => {
+  if (selectionMode) {
+    exitSelectionMode();
+  } else {
+    enterSelectionMode();
+  }
 });
-coverPreviewRemoveBtn.addEventListener('click', () => {
-  const key = currentPreviewKey;
-  closeCoverPreview();
-  if (key) deleteComic(key);
+
+selectionCancelBtn.addEventListener('click', exitSelectionMode);
+
+selectionDeleteBtn.addEventListener('click', async () => {
+  const keysToDelete = [...selectedKeys];
+  exitSelectionMode();
+  await deleteComics(keysToDelete);
 });
+
+function onCardClick(key, card) {
+  if (selectionMode) {
+    toggleCardSelection(key, card);
+  } else {
+    handleCardTap(key);
+  }
+}
 
 async function renderCachedLibrary() {
   let cached;
@@ -398,7 +448,7 @@ async function renderCachedLibrary() {
 
     addProgressBar(card, entry.key, entry.pageCount, progress);
 
-    card.addEventListener('click', () => handleCardTap(entry.key));
+    card.addEventListener('click', () => onCardClick(entry.key, card));
     libraryGrid.appendChild(card);
     cardsByKey[entry.key] = card;
   });
@@ -415,6 +465,11 @@ function buildCard(title, key) {
   dot.className = 'spinner-dot';
   cover.appendChild(dot);
 
+  const checkmark = document.createElement('div');
+  checkmark.className = 'selection-checkmark';
+  checkmark.textContent = '✓';
+  cover.appendChild(checkmark);
+
   const titleEl = document.createElement('div');
   titleEl.className = 'comic-title';
   titleEl.textContent = title;
@@ -430,8 +485,6 @@ function buildCard(title, key) {
   card.appendChild(cover);
   card.appendChild(titleEl);
   card.appendChild(track);
-
-  attachLongPressToPreview(card, key);
 
   return card;
 }
@@ -451,38 +504,9 @@ function addProgressBar(card, key, pageCount, progress) {
 let lastDeleted = null;
 let undoTimer = null;
 
-function attachLongPressToPreview(card, key) {
-  let pressTimer = null;
-  let moved = false;
-
-  const start = (e) => {
-    moved = false;
-    card.classList.add('pressing');
-    pressTimer = setTimeout(() => {
-      if (!moved) {
-        card.classList.remove('pressing');
-        openCoverPreview(key);
-      }
-    }, 500);
-  };
-  const cancel = () => {
-    clearTimeout(pressTimer);
-    card.classList.remove('pressing');
-  };
-  const move = () => { moved = true; cancel(); };
-
-  card.addEventListener('touchstart', start, { passive: true });
-  card.addEventListener('touchend', cancel);
-  card.addEventListener('touchcancel', cancel);
-  card.addEventListener('touchmove', move);
-  card.addEventListener('mousedown', start);
-  card.addEventListener('mouseup', cancel);
-  card.addEventListener('mouseleave', cancel);
-}
-
-async function deleteComic(key) {
+async function collectDeletionRecord(key) {
   const card = cardsByKey[key];
-  if (!card) return;
+  if (!card) return null;
 
   let coverEntry = null;
   try {
@@ -495,7 +519,7 @@ async function deleteComic(key) {
   const liveFileIndex = libraryFiles.findIndex(f => comicKey(f) === key);
   const liveFile = liveFileIndex !== -1 ? libraryFiles[liveFileIndex] : null;
 
-  lastDeleted = { key, coverEntry, progressValue, liveFile };
+  const record = { key, coverEntry, progressValue, liveFile };
 
   card.remove();
   delete cardsByKey[key];
@@ -510,15 +534,34 @@ async function deleteComic(key) {
     tx.objectStore('covers').delete(key);
   } catch (err) { console.error('Could not remove cached cover', err); }
 
+  return record;
+}
+
+async function deleteComic(key) {
+  await deleteComics([key]);
+}
+
+async function deleteComics(keys) {
+  const records = [];
+  for (const key of keys) {
+    const record = await collectDeletionRecord(key);
+    if (record) records.push(record);
+  }
+  if (records.length === 0) return;
+
+  lastDeleted = records;
+
   if (libraryGrid.children.length === 0) {
     libraryGrid.style.display = 'none';
     libraryEmpty.style.display = 'flex';
   }
 
-  showUndoToast();
+  showUndoToast(records.length);
 }
 
-function showUndoToast() {
+function showUndoToast(count) {
+  document.getElementById('undo-toast-text').textContent =
+    count > 1 ? `${count} comics removed` : 'Comic removed';
   clearTimeout(undoTimer);
   undoToast.classList.add('visible');
   undoTimer = setTimeout(() => {
@@ -527,13 +570,8 @@ function showUndoToast() {
   }, 6000);
 }
 
-async function undoDelete() {
-  if (!lastDeleted) return;
-  const { key, coverEntry, progressValue, liveFile } = lastDeleted;
-
-  clearTimeout(undoTimer);
-  undoToast.classList.remove('visible');
-  lastDeleted = null;
+async function restoreComic(record) {
+  const { key, coverEntry, progressValue, liveFile } = record;
 
   if (liveFile) libraryFiles.push(liveFile);
   if (progressValue !== undefined) {
@@ -542,35 +580,48 @@ async function undoDelete() {
     saveProgress(progress);
   }
 
-  if (coverEntry) {
-    try {
-      await saveCoverToCache(coverEntry.key, coverEntry.title, coverEntry.blob, coverEntry.pageCount);
-    } catch (err) { console.error('Could not restore cached cover', err); }
+  if (!coverEntry) return;
 
-    libraryEmpty.style.display = 'none';
-    libraryGrid.style.display = 'grid';
+  try {
+    await saveCoverToCache(coverEntry.key, coverEntry.title, coverEntry.blob, coverEntry.pageCount);
+  } catch (err) { console.error('Could not restore cached cover', err); }
 
-    const card = buildCard(parseComicTitle(coverEntry.title), key);
-    const cover = card.querySelector('.comic-cover');
-    cover.innerHTML = '';
-    const img = document.createElement('img');
-    const url = URL.createObjectURL(coverEntry.blob);
-    img.src = url;
-    img.onload = () => URL.revokeObjectURL(url);
-    cover.appendChild(img);
-    if (!liveFile) {
-      cover.classList.add('needs-reselect');
-      const badge = document.createElement('div');
-      badge.className = 'reselect-badge';
-      badge.textContent = 'Tap to open';
-      cover.appendChild(badge);
-    }
-    const progress = loadProgress();
-    addProgressBar(card, key, coverEntry.pageCount, progress);
+  libraryEmpty.style.display = 'none';
+  libraryGrid.style.display = 'grid';
 
-    card.addEventListener('click', () => handleCardTap(key));
-    libraryGrid.appendChild(card);
-    cardsByKey[key] = card;
+  const card = buildCard(parseComicTitle(coverEntry.title), key);
+  const cover = card.querySelector('.comic-cover');
+  cover.innerHTML = '';
+  const img = document.createElement('img');
+  const url = URL.createObjectURL(coverEntry.blob);
+  img.src = url;
+  img.onload = () => URL.revokeObjectURL(url);
+  cover.appendChild(img);
+  if (!liveFile) {
+    cover.classList.add('needs-reselect');
+    const badge = document.createElement('div');
+    badge.className = 'reselect-badge';
+    badge.textContent = 'Tap to open';
+    cover.appendChild(badge);
+  }
+  const progress = loadProgress();
+  addProgressBar(card, key, coverEntry.pageCount, progress);
+
+  card.addEventListener('click', () => onCardClick(key, card));
+  libraryGrid.appendChild(card);
+  cardsByKey[key] = card;
+}
+
+async function undoDelete() {
+  if (!lastDeleted) return;
+  const records = lastDeleted;
+
+  clearTimeout(undoTimer);
+  undoToast.classList.remove('visible');
+  lastDeleted = null;
+
+  for (const record of records) {
+    await restoreComic(record);
   }
 }
 
@@ -606,7 +657,7 @@ fileInput.addEventListener('change', async (e) => {
 
       if (!card) {
         card = buildCard(parseComicTitle(file.name.replace(/\.(cbz|cbr|zip|rar)$/i, '')), key);
-        card.addEventListener('click', () => handleCardTap(key));
+        card.addEventListener('click', () => onCardClick(key, card));
         libraryGrid.appendChild(card);
         cardsByKey[key] = card;
       }
