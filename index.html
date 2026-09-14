@@ -135,6 +135,23 @@
     padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
   }
   #gate-error { color: #e24b4a; font-size: 13px; min-height: 16px; }
+  #cover-preview-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 60;
+    align-items: center; justify-content: center; flex-direction: column; gap: 16px; padding: 20px;
+  }
+  #cover-preview-overlay.open { display: flex; }
+  #cover-preview-img {
+    max-width: 80%; max-height: 55vh; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+  }
+  #cover-preview-title { color: #eee; font-size: 16px; font-weight: 600; text-align: center; }
+  #cover-preview-remove-btn {
+    background: #e24b4a; color: white; border: none; border-radius: 10px;
+    padding: 12px 22px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  #cover-preview-cancel-btn {
+    background: rgba(255,255,255,0.1); color: #ccc; border: none; border-radius: 10px;
+    padding: 10px 22px; font-size: 14px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -165,6 +182,13 @@
     <span id="undo-toast-text">Comic removed</span>
     <button id="undo-toast-btn">Undo</button>
   </div>
+</div>
+
+<div id="cover-preview-overlay">
+  <img id="cover-preview-img">
+  <div id="cover-preview-title"></div>
+  <button id="cover-preview-remove-btn">Remove from Library</button>
+  <button id="cover-preview-cancel-btn">Cancel</button>
 </div>
 
 <div id="reader-screen">
@@ -311,6 +335,49 @@ const libraryGrid = document.getElementById('library-grid');
 const undoToast = document.getElementById('undo-toast');
 document.getElementById('undo-toast-btn').addEventListener('click', undoDelete);
 
+const coverPreviewOverlay = document.getElementById('cover-preview-overlay');
+const coverPreviewImg = document.getElementById('cover-preview-img');
+const coverPreviewTitle = document.getElementById('cover-preview-title');
+const coverPreviewRemoveBtn = document.getElementById('cover-preview-remove-btn');
+const coverPreviewCancelBtn = document.getElementById('cover-preview-cancel-btn');
+let currentPreviewKey = null;
+let currentPreviewObjectURL = null;
+
+async function openCoverPreview(key) {
+  let coverEntry = null;
+  try {
+    const all = await getAllCachedCovers();
+    coverEntry = all.find(c => c.key === key) || null;
+  } catch (err) { /* ignore */ }
+  if (!coverEntry) return;
+
+  currentPreviewKey = key;
+  if (currentPreviewObjectURL) URL.revokeObjectURL(currentPreviewObjectURL);
+  currentPreviewObjectURL = URL.createObjectURL(coverEntry.blob);
+  coverPreviewImg.src = currentPreviewObjectURL;
+  coverPreviewTitle.textContent = parseComicTitle(coverEntry.title);
+  coverPreviewOverlay.classList.add('open');
+}
+
+function closeCoverPreview() {
+  coverPreviewOverlay.classList.remove('open');
+  if (currentPreviewObjectURL) {
+    URL.revokeObjectURL(currentPreviewObjectURL);
+    currentPreviewObjectURL = null;
+  }
+  currentPreviewKey = null;
+}
+
+coverPreviewCancelBtn.addEventListener('click', closeCoverPreview);
+coverPreviewOverlay.addEventListener('click', (e) => {
+  if (e.target === coverPreviewOverlay) closeCoverPreview();
+});
+coverPreviewRemoveBtn.addEventListener('click', () => {
+  const key = currentPreviewKey;
+  closeCoverPreview();
+  if (key) deleteComic(key);
+});
+
 async function renderCachedLibrary() {
   let cached;
   try {
@@ -377,7 +444,7 @@ function buildCard(title, key) {
   card.appendChild(titleEl);
   card.appendChild(track);
 
-  attachLongPressToDelete(card, key);
+  attachLongPressToPreview(card, key);
 
   return card;
 }
@@ -397,7 +464,7 @@ function addProgressBar(card, key, pageCount, progress) {
 let lastDeleted = null;
 let undoTimer = null;
 
-function attachLongPressToDelete(card, key) {
+function attachLongPressToPreview(card, key) {
   let pressTimer = null;
   let moved = false;
 
@@ -407,9 +474,9 @@ function attachLongPressToDelete(card, key) {
     pressTimer = setTimeout(() => {
       if (!moved) {
         card.classList.remove('pressing');
-        deleteComic(key);
+        openCoverPreview(key);
       }
-    }, 600);
+    }, 500);
   };
   const cancel = () => {
     clearTimeout(pressTimer);
