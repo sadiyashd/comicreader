@@ -32,8 +32,11 @@
   #library-empty p { max-width: 300px; font-size: 14px; margin: 0; }
   #library-grid {
     flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    display: grid; grid-template-columns: repeat(5, 1fr);
     gap: 16px; padding: 16px 20px 40px;
+  }
+  @media (orientation: landscape) {
+    #library-grid { grid-template-columns: repeat(7, 1fr); }
   }
   .comic-card { cursor: pointer; }
   .comic-cover {
@@ -136,21 +139,23 @@
   }
   #gate-error { color: #e24b4a; font-size: 13px; min-height: 16px; }
   #cover-preview-overlay {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 60;
-    align-items: center; justify-content: center; flex-direction: column; gap: 16px; padding: 20px;
+    display: none; position: fixed; inset: 0; z-index: 60;
+    align-items: flex-end; justify-content: center;
   }
   #cover-preview-overlay.open { display: flex; }
-  #cover-preview-img {
-    max-width: 80%; max-height: 55vh; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+  #cover-preview-bar {
+    width: 100%; max-width: 500px; background: rgba(24,24,26,0.97);
+    border-radius: 18px 18px 0 0; padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 8px;
+    box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
   }
-  #cover-preview-title { color: #eee; font-size: 16px; font-weight: 600; text-align: center; }
   #cover-preview-remove-btn {
     background: #e24b4a; color: white; border: none; border-radius: 10px;
-    padding: 12px 22px; font-size: 15px; font-weight: 600; cursor: pointer;
+    padding: 14px; font-size: 15px; font-weight: 600; cursor: pointer;
   }
   #cover-preview-cancel-btn {
     background: rgba(255,255,255,0.1); color: #ccc; border: none; border-radius: 10px;
-    padding: 10px 22px; font-size: 14px; cursor: pointer;
+    padding: 12px; font-size: 14px; cursor: pointer;
   }
 </style>
 </head>
@@ -185,10 +190,10 @@
 </div>
 
 <div id="cover-preview-overlay">
-  <img id="cover-preview-img">
-  <div id="cover-preview-title"></div>
-  <button id="cover-preview-remove-btn">Remove from Library</button>
-  <button id="cover-preview-cancel-btn">Cancel</button>
+  <div id="cover-preview-bar">
+    <button id="cover-preview-remove-btn">Remove from Library</button>
+    <button id="cover-preview-cancel-btn">Cancel</button>
+  </div>
 </div>
 
 <div id="reader-screen">
@@ -336,35 +341,17 @@ const undoToast = document.getElementById('undo-toast');
 document.getElementById('undo-toast-btn').addEventListener('click', undoDelete);
 
 const coverPreviewOverlay = document.getElementById('cover-preview-overlay');
-const coverPreviewImg = document.getElementById('cover-preview-img');
-const coverPreviewTitle = document.getElementById('cover-preview-title');
 const coverPreviewRemoveBtn = document.getElementById('cover-preview-remove-btn');
 const coverPreviewCancelBtn = document.getElementById('cover-preview-cancel-btn');
 let currentPreviewKey = null;
-let currentPreviewObjectURL = null;
 
-async function openCoverPreview(key) {
-  let coverEntry = null;
-  try {
-    const all = await getAllCachedCovers();
-    coverEntry = all.find(c => c.key === key) || null;
-  } catch (err) { /* ignore */ }
-  if (!coverEntry) return;
-
+function openCoverPreview(key) {
   currentPreviewKey = key;
-  if (currentPreviewObjectURL) URL.revokeObjectURL(currentPreviewObjectURL);
-  currentPreviewObjectURL = URL.createObjectURL(coverEntry.blob);
-  coverPreviewImg.src = currentPreviewObjectURL;
-  coverPreviewTitle.textContent = parseComicTitle(coverEntry.title);
   coverPreviewOverlay.classList.add('open');
 }
 
 function closeCoverPreview() {
   coverPreviewOverlay.classList.remove('open');
-  if (currentPreviewObjectURL) {
-    URL.revokeObjectURL(currentPreviewObjectURL);
-    currentPreviewObjectURL = null;
-  }
   currentPreviewKey = null;
 }
 
