@@ -648,6 +648,8 @@ fileInput.addEventListener('change', async (e) => {
     libraryEmpty.style.display = 'none';
     libraryGrid.style.display = 'grid';
 
+    const progress = loadProgress();
+
     const cardsToLoad = [];
     filesToAdd.forEach((file) => {
       const key = comicKey(file);
@@ -674,7 +676,7 @@ fileInput.addEventListener('change', async (e) => {
     for (let i = 0; i < cardsToLoad.length; i++) {
       const { file, card, cover, key } = cardsToLoad[i];
       try {
-        await loadCoverThumbnail(file, card, cover, key);
+        await loadCoverThumbnail(file, card, cover, progress, key);
       } catch (err) {
         console.error('Failed to load cover for', file.name, err);
       }
@@ -696,12 +698,10 @@ fileInput.addEventListener('change', async (e) => {
   } catch (err) {
     console.error('File selection failed:', err);
     statusEl.textContent = 'Something went wrong loading those files: ' + err.message;
-  } finally {
-    e.target.value = '';
   }
 });
 
-async function loadCoverThumbnail(file, card, coverEl, key) {
+async function loadCoverThumbnail(file, card, coverEl, progress, key) {
   try {
     const opened = await openArchive(file);
     if (opened.pageNames.length === 0) return;
@@ -713,9 +713,7 @@ async function loadCoverThumbnail(file, card, coverEl, key) {
     img.onload = () => URL.revokeObjectURL(url);
     coverEl.innerHTML = '';
     coverEl.appendChild(img);
-
-    const currentProgress = loadProgress();
-    addProgressBar(card, key, opened.pageNames.length, currentProgress);
+    addProgressBar(card, key, opened.pageNames.length, progress);
 
     file.__cachedArchive = opened;
 
