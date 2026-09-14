@@ -240,10 +240,6 @@ const gateInput = document.getElementById('gate-input');
 const gateSubmit = document.getElementById('gate-submit');
 const gateError = document.getElementById('gate-error');
 
-function bootApp() {
-  renderCachedLibrary();
-}
-
 function unlockGate() {
   gateOverlay.style.display = 'none';
   localStorage.setItem(GATE_UNLOCK_KEY, 'true');
@@ -266,7 +262,6 @@ gateInput.addEventListener('keydown', (e) => {
 
 if (localStorage.getItem(GATE_UNLOCK_KEY) === 'true') {
   gateOverlay.style.display = 'none';
-  bootApp();
 } else {
   gateInput.focus();
 }
@@ -324,7 +319,6 @@ function getDB() {
   }
   return dbPromise;
 }
-
 async function saveCoverToCache(key, title, blob, pageCount) {
   const db = await getDB();
   return new Promise((resolve, reject) => {
@@ -334,7 +328,6 @@ async function saveCoverToCache(key, title, blob, pageCount) {
     tx.onerror = () => reject(tx.error);
   });
 }
-
 async function getAllCachedCovers() {
   const db = await getDB();
   return new Promise((resolve, reject) => {
@@ -355,8 +348,6 @@ const libraryEmpty = document.getElementById('library-empty');
 const libraryGrid = document.getElementById('library-grid');
 const undoToast = document.getElementById('undo-toast');
 document.getElementById('undo-toast-btn').addEventListener('click', undoDelete);
-
-document.getElementById('library-reload-btn').addEventListener('click', () => location.reload());
 
 /* ---- Selection mode (delete flow) ---- */
 const libraryTrashBtn = document.getElementById('library-trash-btn');
@@ -546,6 +537,10 @@ async function collectDeletionRecord(key) {
   return record;
 }
 
+async function deleteComic(key) {
+  await deleteComics([key]);
+}
+
 async function deleteComics(keys) {
   const records = [];
   for (const key of keys) {
@@ -653,6 +648,8 @@ fileInput.addEventListener('change', async (e) => {
     libraryEmpty.style.display = 'none';
     libraryGrid.style.display = 'grid';
 
+    const progress = loadProgress();
+
     const cardsToLoad = [];
     filesToAdd.forEach((file) => {
       const key = comicKey(file);
@@ -676,11 +673,10 @@ fileInput.addEventListener('change', async (e) => {
     if (cardsToLoad.length > 1) {
       statusEl.textContent = `Loading covers… 0 / ${cardsToLoad.length}`;
     }
-
     for (let i = 0; i < cardsToLoad.length; i++) {
       const { file, card, cover, key } = cardsToLoad[i];
       try {
-        await loadCoverThumbnail(file, card, cover, key);
+        await loadCoverThumbnail(file, card, cover, progress, key);
       } catch (err) {
         console.error('Failed to load cover for', file.name, err);
       }
@@ -702,12 +698,10 @@ fileInput.addEventListener('change', async (e) => {
   } catch (err) {
     console.error('File selection failed:', err);
     statusEl.textContent = 'Something went wrong loading those files: ' + err.message;
-  } finally {
-    e.target.value = '';
   }
 });
 
-async function loadCoverThumbnail(file, card, coverEl, key) {
+async function loadCoverThumbnail(file, card, coverEl, progress, key) {
   try {
     const opened = await openArchive(file);
     if (opened.pageNames.length === 0) return;
@@ -719,9 +713,7 @@ async function loadCoverThumbnail(file, card, coverEl, key) {
     img.onload = () => URL.revokeObjectURL(url);
     coverEl.innerHTML = '';
     coverEl.appendChild(img);
-
-    const currentProgress = loadProgress();
-    addProgressBar(card, key, opened.pageNames.length, currentProgress);
+    addProgressBar(card, key, opened.pageNames.length, progress);
 
     file.__cachedArchive = opened;
 
@@ -826,14 +818,6 @@ const navMenuOverlay = document.getElementById('nav-menu-overlay');
 const navMenuPanel = document.getElementById('nav-menu-panel');
 const menuLibraryBtn = document.getElementById('menu-library-btn');
 const menuSpreadBtn = document.getElementById('menu-spread-btn');
-const menuStretchBtn = document.getElementById('menu-stretch-btn');
-const menuReloadBtn = document.getElementById('menu-reload-btn');
-const stretchPanel = document.getElementById('stretch-panel');
-const stretchXSlider = document.getElementById('stretch-x-slider');
-const stretchYSlider = document.getElementById('stretch-y-slider');
-const stretchXValue = document.getElementById('stretch-x-value');
-const stretchYValue = document.getElementById('stretch-y-value');
-const stretchResetBtn = document.getElementById('stretch-reset-btn');
 
 function openNavMenu() {
   navMenuOverlay.classList.add('open');
@@ -846,62 +830,6 @@ function closeNavMenu() {
 navMenuOverlay.addEventListener('click', (e) => {
   if (e.target === navMenuOverlay) closeNavMenu();
 });
-
-menuLibraryBtn.addEventListener('click', () => {
-  closeNavMenu();
-  readerScreen.style.display = 'none';
-  libraryScreen.style.display = 'flex';
-  if (currentFile && cardsByKey[comicKey(currentFile)]) {
-    const card = cardsByKey[comicKey(currentFile)];
-    addProgressBar(card, comicKey(currentFile), currentArchive ? currentArchive.pageNames.length : 0, loadProgress());
-  }
-});
-
-menuSpreadBtn.addEventListener('click', () => {
-  spreadModeEnabled = !spreadModeEnabled;
-  saveSpreadMode(spreadModeEnabled);
-  updateSpreadToggleUI();
-  if (currentArchive) {
-    const currentFirstPage = spreads[currentSpreadIndex] ? spreads[currentSpreadIndex][0] : 0;
-    spreads = buildSpreads(currentArchive.pageNames.length, spreadModeEnabled);
-    currentSpreadIndex = spreadIndexForPage(currentFirstPage);
-    showSpread(currentSpreadIndex);
-  }
-});
-
-menuStretchBtn.addEventListener('click', () => {
-  stretchPanel.classList.toggle('open');
-});
-
-menuReloadBtn.addEventListener('click', () => {
-  location.reload();
-});
-
-stretchXSlider.addEventListener('input', (e) => {
-  stretchXValue.textContent = `${e.target.value}%`;
-  applyStretchTransform();
-});
-
-stretchYSlider.addEventListener('input', (e) => {
-  stretchYValue.textContent = `${e.target.value}%`;
-  applyStretchTransform();
-});
-
-stretchResetBtn.addEventListener('click', () => {
-  stretchXSlider.value = 100;
-  stretchYSlider.value = 100;
-  stretchXValue.textContent = '100%';
-  stretchYValue.textContent = '100%';
-  applyStretchTransform();
-});
-
-function applyStretchTransform() {
-  const scaleX = stretchXSlider.value / 100;
-  const scaleY = stretchYSlider.value / 100;
-  const transformStr = `scale(${scaleX}, ${scaleY})`;
-  pageImageLeft.style.transform = transformStr;
-  pageImageRight.style.transform = transformStr;
-}
 
 let currentArchive = null;
 let currentFile = null;
@@ -982,78 +910,248 @@ async function preloadNextSpread(spreadIdx) {
   }
 }
 
-async function showSpread(index) {
-  if (!currentArchive || index < 0 || index >= spreads.length) return;
+async function showSpread(spreadIdx) {
+  if (spreadIdx < 0 || spreadIdx >= spreads.length) return;
+  currentSpreadIndex = spreadIdx;
+  const myArchive = currentArchive;
+  const myFile = currentFile;
+  const myRequestId = openRequestId;
+  const pageIndices = spreads[spreadIdx];
 
-  loadingSpinner.classList.add('visible');
+  loadingSpinner.textContent = 'Loading page…';
 
-  objectURLsInUse.forEach(url => URL.revokeObjectURL(url));
-  objectURLsInUse = [];
-
-  const pageIndices = spreads[index];
-  const isDual = pageIndices.length === 2;
+  const timer = setTimeout(() => {
+    if (myRequestId === openRequestId) {
+      loadingSpinner.classList.add('visible');
+    }
+  }, 200);
 
   try {
-    const getBlob = async (pageIdx) => {
-      if (preloadedBlobs[pageIdx]) {
-        const b = preloadedBlobs[pageIdx];
-        delete preloadedBlobs[pageIdx];
-        return b;
+    const blobs = [];
+    for (const i of pageIndices) {
+      if (preloadedBlobs[i]) {
+        blobs.push(preloadedBlobs[i]);
+        delete preloadedBlobs[i];
+      } else {
+        blobs.push(await getPageBlobFromArchive(myArchive, myArchive.pageNames[i]));
       }
-      return await getPageBlobFromArchive(currentArchive, currentArchive.pageNames[pageIdx]);
-    };
-
-    if (isDual) {
-      const [blobLeft, blobRight] = await Promise.all([
-        getBlob(pageIndices[0]),
-        getBlob(pageIndices[1])
-      ]);
-
-      const urlLeft = URL.createObjectURL(blobLeft);
-      const urlRight = URL.createObjectURL(blobRight);
-      objectURLsInUse.push(urlLeft, urlRight);
-
-      pageImageLeft.src = urlLeft;
-      pageImageRight.src = urlRight;
-      pageImageLeft.style.display = 'block';
-      pageImageRight.style.display = 'block';
-    } else {
-      const blob = await getBlob(pageIndices[0]);
-      const url = URL.createObjectURL(blob);
-      objectURLsInUse.push(url);
-
-      pageImageLeft.src = url;
-      pageImageLeft.style.display = 'block';
-      pageImageRight.style.display = 'none';
+    }
+    if (myRequestId !== openRequestId) {
+      clearTimeout(timer);
+      return;
     }
 
+    objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
+    objectURLsInUse = [];
+
+    const urls = blobs.map(b => URL.createObjectURL(b));
+    objectURLsInUse = urls;
+
+    pageImageLeft.src = urls[0];
+    pageImageLeft.style.display = 'block';
+
+    if (urls.length > 1) {
+      pageImageRight.src = urls[1];
+      pageImageRight.style.display = 'block';
+      await Promise.all([waitForImageLoad(pageImageLeft), waitForImageLoad(pageImageRight)]);
+      if (myRequestId !== openRequestId) {
+        clearTimeout(timer);
+        return;
+      }
+      reflowSpread();
+    } else {
+      pageImageRight.style.display = 'none';
+      await waitForImageLoad(pageImageLeft);
+      applyStretchCorrection();
+    }
+
+    clearTimeout(timer);
+    loadingSpinner.classList.remove('visible');
+
     const progress = loadProgress();
-    progress[comicKey(currentFile)] = pageIndices[0];
+    progress[comicKey(myFile)] = pageIndices[0];
     saveProgress(progress);
 
-    preloadNextSpread(index);
+    preloadNextSpread(spreadIdx);
   } catch (err) {
-    console.error('Failed to display spread:', err);
-  } finally {
-    loadingSpinner.classList.remove('visible');
+    console.error(err);
+    clearTimeout(timer);
+    loadingSpinner.textContent = 'Error loading page: ' + err.message;
+    loadingSpinner.classList.add('visible');
   }
 }
 
-document.getElementById('tap-left').addEventListener('click', () => {
-  if (currentSpreadIndex > 0) {
-    currentSpreadIndex--;
+function waitForImageLoad(img) {
+  return new Promise((resolve) => {
+    if (img.complete && img.naturalWidth > 0) { resolve(); return; }
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+  });
+}
+
+const SPREAD_GAP_PX = 12;
+
+function reflowSpread() {
+  if (pageImageRight.style.display === 'none') return;
+  const w1 = pageImageLeft.naturalWidth, h1 = pageImageLeft.naturalHeight;
+  const w2 = pageImageRight.naturalWidth, h2 = pageImageRight.naturalHeight;
+  if (!w1 || !h1 || !w2 || !h2) return;
+
+  const containerRect = pageContainer.getBoundingClientRect();
+  const containerStyle = getComputedStyle(pageContainer);
+  const paddingBottom = parseFloat(containerStyle.paddingBottom) || 0;
+  const paddingTop = parseFloat(containerStyle.paddingTop) || 0;
+  const cw = containerRect.width - SPREAD_GAP_PX;
+  const ch = containerRect.height - paddingBottom - paddingTop;
+
+  const combinedAspectWidthAtHeight1 = (w1 / h1) + (w2 / h2);
+  let targetHeight = Math.min(ch, cw / combinedAspectWidthAtHeight1);
+
+  const width1 = targetHeight * (w1 / h1);
+  const width2 = targetHeight * (w2 / h2);
+
+  pageImageLeft.style.width = width1 + 'px';
+  pageImageLeft.style.height = targetHeight + 'px';
+  pageImageRight.style.width = width2 + 'px';
+  pageImageRight.style.height = targetHeight + 'px';
+
+  applyStretchCorrection();
+}
+
+const STRETCH_KEY = 'usbComicReaderStretchCorrections';
+function loadStretchCorrections() {
+  try { return JSON.parse(localStorage.getItem(STRETCH_KEY)) || {}; } catch { return {}; }
+}
+function saveStretchCorrections(map) { localStorage.setItem(STRETCH_KEY, JSON.stringify(map)); }
+function getStretchForCurrentComic() {
+  if (!currentFile) return { scaleX: 1, scaleY: 1 };
+  const map = loadStretchCorrections();
+  return map[comicKey(currentFile)] || { scaleX: 1, scaleY: 1 };
+}
+function setStretchForCurrentComic(scaleX, scaleY) {
+  if (!currentFile) return;
+  const map = loadStretchCorrections();
+  map[comicKey(currentFile)] = { scaleX, scaleY };
+  saveStretchCorrections(map);
+}
+function applyStretchCorrection() {
+  const { scaleX, scaleY } = getStretchForCurrentComic();
+  const transform = `scale(${scaleX}, ${scaleY})`;
+  pageImageLeft.style.transform = transform;
+  if (pageImageRight.style.display !== 'none') pageImageRight.style.transform = transform;
+}
+
+window.addEventListener('resize', () => {
+  if (currentArchive && spreads[currentSpreadIndex] && spreads[currentSpreadIndex].length === 2) {
+    reflowSpread();
+  }
+});
+
+document.getElementById('tap-left').addEventListener('click', () => showSpread(currentSpreadIndex - 1));
+document.getElementById('tap-right').addEventListener('click', () => showSpread(currentSpreadIndex + 1));
+document.getElementById('tap-center').addEventListener('click', () => {
+  if (navMenuOverlay.classList.contains('open')) {
+    closeNavMenu();
+  } else {
+    openNavMenu();
+  }
+});
+
+menuSpreadBtn.addEventListener('click', () => {
+  spreadModeEnabled = !spreadModeEnabled;
+  saveSpreadMode(spreadModeEnabled);
+  updateSpreadToggleUI();
+  closeNavMenu();
+
+  if (currentArchive) {
+    const currentFirstPage = spreads[currentSpreadIndex][0];
+    spreads = buildSpreads(currentArchive.pageNames.length, spreadModeEnabled);
+    currentSpreadIndex = spreadIndexForPage(currentFirstPage);
     showSpread(currentSpreadIndex);
   }
 });
 
-document.getElementById('tap-right').addEventListener('click', () => {
-  if (currentSpreadIndex < spreads.length - 1) {
-    currentSpreadIndex++;
-    showSpread(currentSpreadIndex);
+const menuStretchBtn = document.getElementById('menu-stretch-btn');
+const stretchPanel = document.getElementById('stretch-panel');
+const stretchXSlider = document.getElementById('stretch-x-slider');
+const stretchYSlider = document.getElementById('stretch-y-slider');
+const stretchXValue = document.getElementById('stretch-x-value');
+const stretchYValue = document.getElementById('stretch-y-value');
+const stretchResetBtn = document.getElementById('stretch-reset-btn');
+
+menuStretchBtn.addEventListener('click', () => {
+  const isOpen = stretchPanel.classList.toggle('open');
+  if (isOpen) {
+    const { scaleX, scaleY } = getStretchForCurrentComic();
+    stretchXSlider.value = Math.round(scaleX * 100);
+    stretchYSlider.value = Math.round(scaleY * 100);
+    stretchXValue.textContent = stretchXSlider.value + '%';
+    stretchYValue.textContent = stretchYSlider.value + '%';
   }
 });
 
-document.getElementById('tap-center').addEventListener('click', openNavMenu);
+function handleStretchSliderInput() {
+  const scaleX = parseInt(stretchXSlider.value, 10) / 100;
+  const scaleY = parseInt(stretchYSlider.value, 10) / 100;
+  stretchXValue.textContent = stretchXSlider.value + '%';
+  stretchYValue.textContent = stretchYSlider.value + '%';
+  setStretchForCurrentComic(scaleX, scaleY);
+  applyStretchCorrection();
+}
+stretchXSlider.addEventListener('input', handleStretchSliderInput);
+stretchYSlider.addEventListener('input', handleStretchSliderInput);
+
+stretchResetBtn.addEventListener('click', () => {
+  stretchXSlider.value = 100;
+  stretchYSlider.value = 100;
+  handleStretchSliderInput();
+});
+
+menuLibraryBtn.addEventListener('click', () => {
+  closeNavMenu();
+  objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
+  objectURLsInUse = [];
+  preloadedBlobs = {};
+  readerScreen.style.display = 'none';
+  libraryScreen.style.display = 'flex';
+
+  const progress = loadProgress();
+  const key = comicKey(currentFile);
+  const card = cardsByKey[key];
+  if (card && currentArchive) {
+    addProgressBar(card, key, currentArchive.pageNames.length, progress);
+  }
+});
+
+function forceReload() {
+  const url = new URL(window.location.href);
+  url.searchParams.set('_reload', Date.now());
+  window.location.replace(url.toString());
+}
+
+const menuReloadBtn = document.getElementById('menu-reload-btn');
+menuReloadBtn.addEventListener('click', forceReload);
+
+const libraryReloadBtn = document.getElementById('library-reload-btn');
+libraryReloadBtn.addEventListener('click', forceReload);
+
+window.addEventListener('error', (e) => {
+  console.error('Unhandled error:', e.error || e.message);
+  if (statusEl) statusEl.textContent = 'Something went wrong: ' + (e.error ? e.error.message : e.message);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('Unhandled promise rejection:', e.reason);
+  if (statusEl) statusEl.textContent = 'Something went wrong: ' + (e.reason && e.reason.message ? e.reason.message : e.reason);
+});
+
+function bootApp() {
+  renderCachedLibrary();
+}
+
+if (localStorage.getItem(GATE_UNLOCK_KEY) === 'true') {
+  bootApp();
+}
 </script>
+
 </body>
 </html>
