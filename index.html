@@ -775,28 +775,44 @@ function loadWasmBinary() {
 async function openRar(file) {
   const unrarModule = await loadUnrarModule();
   const wasmBinary = await loadWasmBinary();
+  // Read the archive's bytes into memory once — cheap and safe to keep
+  // around. We do NOT keep the rarExtractor object itself alive after
+  // this — creating a fresh extractor per single read is what avoids
+  // cross-comic corruption (see getPageBlobFromArchive).
   const buf = await file.arrayBuffer();
-  const rarExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
-  const list = rarExtractor.getFileList();
+  const listExtractor = await unrarModule.createExtractorFromData({ data: buf, wasmBinary });
+  const list = listExtractor.getFileList();
   const headers = [...list.fileHeaders];
   const pageNames = headers
     .filter(h => !h.flags.directory && isValidImageFile(h.name))
     .map(h => h.name)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return { type: 'rar', rarExtractor, rarQueue: Promise.resolve(), pageNames };
+  return { type: 'rar', buf, rarQueue: Promise.resolve(), pageNames };
 }
 
 function getPageBlobFromArchive(archive, name) {
   if (archive.type === 'zip') {
     return archive.zip.files[name].async('blob');
   } else {
-    const run = () => {
-      const extracted = archive.rarExtractor.extract({ files: [name] });
+    // Fresh, throwaway extractor for every single page — never reused,
+    // never kept alive after this call. Keeping extractor objects around
+    // (even from different comics) seems to share underlying WASM memory
+    // and corrupt each other; building one fresh each time avoids that
+    // entirely. Also uses unfiltered extract() + manual name matching,
+    // since the filtered "files: [name]" option has its own separate
+    // reliability problems.
+    const run = async () => {
+      const unrarModule = await loadUnrarModule();
+      const wasmBinary = await loadWasmBinary();
+      const rarExtractor = await unrarModule.createExtractorFromData({ data: archive.buf, wasmBinary });
+
+      const extracted = rarExtractor.extract();
       const files = [...extracted.files];
-      if (!files[0] || !files[0].extraction) {
+      const match = files.find(f => f.fileHeader && f.fileHeader.name === name);
+      if (!match || !match.extraction) {
         throw new Error(`Could not read page "${name}" from this .cbr.`);
       }
-      const data = files[0].extraction;
+      const data = match.extraction;
       const ext = name.split('.').pop().toLowerCase();
       const mime = ext === 'png' ? 'image/png'
         : ext === 'gif' ? 'image/gif'
